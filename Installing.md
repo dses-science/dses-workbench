@@ -1,6 +1,6 @@
 # DSES Radio Astronomy Workbench — Installation Guide
 
-**Version 1.5.3**
+**Version 1.6.0**
 Author: Richard M Hambly (K0GD) — k0gd@cnssys.com
 License: GPL-3.0-or-later
 
@@ -150,14 +150,14 @@ Accept the prompt; conda downloads and installs the three packages. If the launc
 
 Download the application from the distribution site. You can either use the direct links below, or browse the folder <https://gpstime.com/sw_distribution/dses-workbench/> and pick the newest `dses-workbench-*.zip`:
 
-- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.5.3.zip>
+- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.6.0.zip>
 - **This guide (PDF):** <https://gpstime.com/sw_distribution/dses-workbench/DSES_Radio_Astronomy_Workbench_Installation.pdf>
 
 The zip is roughly 60 MB — it includes a short sample recording so the program can run in playback mode when no radio is attached. (Replace `1.4.0` in the link with a newer version number if a later release has been published.)
 
 ### 3.1 Windows 11
 
-1. Extract the zip anywhere you have write permission. A common choice is `Documents\DSES-Workbench`. The extracted folder will be `dses-workbench-1.5.3\` and will contain `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip anywhere you have write permission. A common choice is `Documents\DSES-Workbench`. The extracted folder will be `dses-workbench-1.6.0\` and will contain `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Optional) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
@@ -176,12 +176,12 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
    ``bash
    mkdir -p ~/Applications && cd ~/Applications
-   unzip ~/Downloads/dses-workbench-1.5.3.zip
-   cd dses-workbench-1.5.3
+   unzip ~/Downloads/dses-workbench-1.6.0.zip
+   cd dses-workbench-1.6.0
    chmod +x launcher.sh
    ``
 
-   The extracted `dses-workbench-1.5.3/` folder contains `dses_workbench.py`, `launcher.sh`, `dses-workbench.desktop`, `LICENSE`, the `icons/` folder, and this guide. (Avoid system locations like `/opt` unless you extract with `sudo` — keeping it in your home directory avoids permission issues.)
+   The extracted `dses-workbench-1.6.0/` folder contains `dses_workbench.py`, `launcher.sh`, `dses-workbench.desktop`, `LICENSE`, the `icons/` folder, and this guide. (Avoid system locations like `/opt` unless you extract with `sudo` — keeping it in your home directory avoids permission issues.)
 
 2. Launch:
 
@@ -206,8 +206,8 @@ The steps are the same as Linux. Extract it into your personal **`~/Applications
 
 ``bash
 mkdir -p ~/Applications && cd ~/Applications
-unzip ~/Downloads/dses-workbench-1.5.3.zip
-cd dses-workbench-1.5.3
+unzip ~/Downloads/dses-workbench-1.6.0.zip
+cd dses-workbench-1.6.0
 chmod +x launcher.sh
 ./launcher.sh
 ``
@@ -227,7 +227,7 @@ On Apple Silicon, **make sure** you installed the `arm64` build of Radioconda. M
 If the Finder warns about an unidentified developer when running `launcher.sh`, clear the quarantine attribute on the unzipped folder:
 
 ``bash
-xattr -dr com.apple.quarantine dses-workbench-1.5.3
+xattr -dr com.apple.quarantine dses-workbench-1.6.0
 ``
 
 
@@ -357,7 +357,7 @@ Radioconda does **not** need reinstalling for an app update.
 If you'd rather apply it yourself, each release is a self-contained zip:
 
 1. **Close** the running app.
-2. **Extract** the new zip alongside the old one — a new folder named with the version (e.g. `dses-workbench-1.5.3`) — or overwrite the old folder's files.
+2. **Extract** the new zip alongside the old one — a new folder named with the version (e.g. `dses-workbench-1.6.0`) — or overwrite the old folder's files.
 3. **Run** `launcher.bat` (Windows) or `launcher.sh` (macOS/Linux) from the **new** folder.
 
 ### What is preserved across versions
@@ -453,7 +453,7 @@ The GR flow graph is running but no samples are arriving. Usual causes:
 ### macOS: "developer cannot be verified"
 
 ``bash
-xattr -dr com.apple.quarantine /path/to/dses-workbench-1.5.3
+xattr -dr com.apple.quarantine /path/to/dses-workbench-1.6.0
 ``
 
 For the optional Desktop **`.app`** icon (built by `install-shortcut.command`), the same warning can appear the first time you double-click it — right-click the app → **Open** once, or approve it in **System Settings → Privacy & Security → Open Anyway**. You only need to do this once per machine.
@@ -595,6 +595,10 @@ Answers "what can I record right now?" from the ATNF catalog: every pulsar above
 A built-in test of the *entire* pulsar chain — SDR, channelizer, filterbank writer, timebase, PRESTO fold, verdict — with no test equipment at all. The B210's own transmitter plays a synthetic pulsar (100 ms period, DM 50, noise-carrier pulses with real cold-plasma dispersion) at **minimum TX gain** on 420 MHz, far from the protected hydrogen-line band; the receiver records the B210's internal TX→RX leakage — no cable or attenuator needed. After the capture (default 90 s) the app folds the recording at the injected period and DM and grades PASS/FAIL: the period must come back exact, the DM near 50 (a DM stuck at 0 means dispersion was lost), and the significance high. Your tuning, sample rate, gain, and antenna are saved before the test and restored right after the capture, while the fold runs. Run it before packing for a field session: a PASS means a real pulsar that reaches the feed will survive the pipeline. Requires a USRP B200/B210 and an installed PRESTO. The recording and its fold PDF land in a `self_test` folder inside your recordings folder.
 
 Beyond the standard test, two advanced modes make it a general pulsar *simulator*: **Simulate a catalog pulsar** picks any source from the ATNF catalog (magnetars included) and injects its exact catalog period and DM, and **Custom** opens every parameter — frequency (any B210 frequency, 70–6000 MHz), sample rate, period, DM, duty cycle, amplitude, RX gain, channels, and capture length. A live readout translates the chosen geometry into what matters: the dispersion sweep across the band and the DM resolution it can honestly support, pulse width vs sample time, and pulses per capture — narrow bands at high frequency constrain DM weakly, and the readout says so before you spend the time. After picking a catalog source, **Suggest geometry** goes further and solves for settings that can actually measure that source's DM, filling them in for you (it knows the internal leakage weakens at low frequency and that the duplex transmitter holds its timing best at or below 2 MS/s). TX gain is always locked at minimum: the internal leakage is all the test needs, so even the protected 1420 MHz band is safe.
+
+#### Observe menu — Drift-Scan Review
+
+The morning-after quicklook for drift-scan recordings: open one or more ezRA-format `.txt` files (written by the Workbench *or* by ezRA's own ezCol — both dialects are read, including ezCol's interleaved reference rows and mid-file elevation changes) and get one standard report per file. It checks the header (software version, whether the hydrogen line is inside the recorded band, the site coordinates against your settings, and whether the file's az/el disagrees with the Recording panel's current values — the classic stale-header trap), the recording itself (row cadence, gaps, total-power stability), and the spectrum (narrow spurs against a median bandpass, with the known 1420.000-family carriers called out). The plots show a bandpass-flattened waterfall, the averaged velocity profile, and the transit light curve with a Gaussian fit — peak, width, and the transit center in UT and local sidereal time, with the half-integration timestamp correction applied. Load several nights at once and the Trend tab plots the fitted peak day by day — the pointing/sag monitor used on the Haswell dish. **Copy summary** puts the whole text report on the clipboard; **Save report…** writes it to disk with PNGs of the plots. The review is deliberately the layer *below* ezRA's ezCon/ezSky/ezGal: it answers "did I detect it, and is the file clean?" so you know what is worth feeding onward.
 
 #### Observation
 

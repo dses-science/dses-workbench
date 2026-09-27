@@ -10,7 +10,11 @@ footer with date + page number) and then converted to PDF. The .docx is a
 throwaway intermediate — it is written to a temp file and removed after the
 PDF is built, unless you pass --docx to keep it. PDF conversion uses
 LibreOffice on macOS/Linux and Microsoft Word on Windows (see
-convert_docx_to_pdf).
+convert_docx_to_pdf). On Windows the PDF is printed through a PDF printer
+driver, never Word's own exporter (it rasterizes the house fonts):
+'Microsoft Print to PDF' by default, Acrobat Distiller or the PDFMaker
+add-in on request (DSES_PDF_ENGINE=distiller|pdfmaker). The build must
+never stop on a dialog: if one appears, see _word_app / _DialogSentinel.
 
 Handles the Markdown subset used in Installing.md:
     # / ## / ###       — headings
@@ -119,7 +123,23 @@ SRC = Path("Installing.md")
 DST_PDF  = Path("DSES_Radio_Astronomy_Workbench_Installation.pdf")
 DOC_TITLE    = "DSES Radio Astronomy Workbench"
 DOC_SUBTITLE = "Installation Guide"
-DOC_VERSION  = "v1.1.6"
+def _app_version_default():
+    """'v<APP_VERSION>' read from dses_workbench.py next to this script, so a
+    cover stamps the release being cut even when --version is not passed.
+    (Before 27-Sep-2026 the default was a frozen "v1.1.6", and the release
+    workflow PDF shipped with that stamp whenever the flag was forgotten.)"""
+    try:
+        text = (Path(__file__).resolve().parent / "dses_workbench.py").read_text(
+            encoding="utf-8", errors="replace")
+        m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', text, re.M)
+        if m:
+            return "v" + m.group(1)
+    except OSError:
+        pass
+    return "v1.1.6"
+
+
+DOC_VERSION  = _app_version_default()
 DOC_AUTHOR   = "Richard M Hambly (K0GD)"
 DOC_ORG      = "DSES"
 
@@ -131,9 +151,11 @@ DOC_ORG      = "DSES"
 # IMPORTANT: these are OpenType-PS (CFF) faces. Word's SaveAs-PDF silently
 # RASTERIZES them (verified 19-Aug-2026: Minion/Myriad runs came out as images
 # with no text layer, while TrueType Source Code Pro embedded fine), so the
-# Windows converter below prints through the Adobe PDF printer instead. If you
-# change these back to TrueType faces (Calibri/Cambria/Consolas), the plain
-# SaveAs path is adequate again.
+# Windows converter below prints through a PDF printer driver instead
+# ('Microsoft Print to PDF' by default since 27-Sep-2026; Adobe PDF/Distiller
+# on request — see _pdf_engine for why). If you change these back to
+# TrueType faces (Calibri/Cambria/Consolas), the plain SaveAs path is
+# adequate again.
 FONT_BODY = "Minion Pro"
 FONT_HEAD = "Myriad Pro"
 FONT_MONO = "Source Code Pro"
@@ -226,6 +248,46 @@ def set_paragraph_shading(paragraph, color_hex):
     shd.set(qn('w:color'), 'auto')
     shd.set(qn('w:fill'), color_hex)
     pPr.append(shd)
+
+
+def new_numbered_list(doc):
+    """Return a fresh w:num id that restarts the 'List Number' sequence at 1.
+
+    Word numbers every 'List Number' paragraph in one running sequence, so a
+    second numbered list continues where the first stopped. A new w:num that
+    points at the style's abstractNum with a startOverride of 1 restarts it.
+    Returns None (caller keeps the plain style) if the lookup fails.
+    """
+    try:
+        style_pPr = doc.styles['List Number'].element.pPr
+        style_num = style_pPr.find(qn('w:numPr')).find(qn('w:numId')).get(qn('w:val'))
+        numbering = doc.part.numbering_part.numbering_definitions._numbering
+        abstract_id = None
+        for num in numbering.findall(qn('w:num')):
+            if num.get(qn('w:numId')) == style_num:
+                abstract_id = num.find(qn('w:abstractNumId')).get(qn('w:val'))
+                break
+        if abstract_id is None:
+            return None
+        new_num = numbering.add_num(int(abstract_id))
+        new_num.add_lvlOverride(ilvl=0).add_startOverride(1)
+        return new_num.numId
+    except Exception:
+        return None
+
+
+def set_list_num(paragraph, num_id):
+    """Point a list paragraph at the given w:num (level 0)."""
+    if num_id is None:
+        return
+    pPr = paragraph._p.get_or_add_pPr()
+    for old in pPr.findall(qn('w:numPr')):
+        pPr.remove(old)
+    numPr = OxmlElement('w:numPr')
+    ilvl = OxmlElement('w:ilvl'); ilvl.set(qn('w:val'), '0')
+    numId = OxmlElement('w:numId'); numId.set(qn('w:val'), str(num_id))
+    numPr.append(ilvl); numPr.append(numId)
+    pPr.append(numPr)
 
 
 def add_page_number_field(paragraph):
@@ -813,9 +875,11 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
             continue
 
         if re.match(r'^\s*\d+\.\s+', line):
+            list_num = new_numbered_list(doc)   # restart at 1 for this list
             while i < len(lines) and re.match(r'^\s*\d+\.\s+', lines[i]):
                 content = re.sub(r'^\s*\d+\.\s+', '', lines[i])
                 p = doc.add_paragraph(style='List Number')
+                set_list_num(p, list_num)
                 add_runs(p, content)
                 while (i + 1 < len(lines) and lines[i + 1].startswith('   ')
                        and not re.match(r'^\s*\d+\.\s+', lines[i + 1])
@@ -868,15 +932,30 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
 
 
 def _kill_stale_invisible_word():
-    """Kill any orphaned background Word processes left over from a
-    previous run that crashed between Documents.Open and word.Quit.
-    Skipped silently if psutil isn't available."""
+    """Kill orphaned background Word processes left over from a previous
+    run that died between Documents.Open and word.Quit. A Word that owns a
+    VISIBLE window is someone's open document and is left alone (added
+    27-Sep-2026; before that every winword.exe was killed). Skipped
+    silently if psutil isn't available."""
     try:
         import psutil
     except ImportError:
         return
-    for p in psutil.process_iter(['name']):
+    visible = set()
+    try:
+        import win32gui
+        import win32process
+
+        def _cb(hwnd, acc):
+            if win32gui.IsWindowVisible(hwnd):
+                acc.add(win32process.GetWindowThreadProcessId(hwnd)[1])
+        win32gui.EnumWindows(_cb, visible)
+    except Exception:
+        pass
+    for p in psutil.process_iter(['name', 'pid']):
         if (p.info.get('name') or '').lower() == 'winword.exe':
+            if p.info.get('pid') in visible:
+                continue
             try:
                 p.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -920,7 +999,8 @@ def convert_docx_to_pdf(docx_path: Path, pdf_path: Path):
     """Convert the DOCX to PDF using the best available engine:
 
       * Windows + Microsoft Word -> Word via pywin32 (updates the TOC/PAGE
-        fields properly; the preferred, fully-correct path);
+        fields properly), then a PDF printer driver chosen by the
+        DSES_PDF_ENGINE environment variable (see _pdf_engine);
       * otherwise (macOS/Linux)  -> LibreOffice headless, if installed.
 
     Raises if neither is available so the caller can fall back to shipping
@@ -937,20 +1017,26 @@ def convert_docx_to_pdf(docx_path: Path, pdf_path: Path):
         "libreoffice`) and re-run, or open the .docx and Save As PDF.")
 
 
+def _printer_available(name):
+    """True if a printer of that name is installed for this user."""
+    try:
+        import win32print
+        names = {p[2] for p in win32print.EnumPrinters(
+            win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)}
+        return name in names
+    except Exception:
+        return False
+
+
 def _adobe_pdf_printer_available():
     """True if the 'Adobe PDF' printer (Acrobat Distiller) is installed.
 
     Note this is independent of Acrobat.exe itself: on the Windows dev box
     Acrobat has been crashing since its 2026-08-02 update, but the printer
-    driver and Distiller are separate binaries and work fine (verified
-    19-Aug-2026)."""
-    try:
-        import win32print
-        names = {p[2] for p in win32print.EnumPrinters(
-            win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)}
-        return "Adobe PDF" in names
-    except Exception:
-        return False
+    driver and Distiller are separate binaries (verified 19-Aug-2026) —
+    although the driver DOES launch Acrobat.exe for font capture, see
+    _pdf_engine."""
+    return _printer_available("Adobe PDF")
 
 
 def _find_acrodist():
@@ -1028,29 +1114,268 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path):
     shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
-def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
-    """Open the DOCX in Word, update every field (TOC + PAGE), then write the
-    PDF. Direct pywin32 instead of docx2pdf so we control the field-update
-    step — without it the TOC stays as the placeholder text. Requires
-    Microsoft Word on Windows.
-
-    The PDF itself comes from the Adobe PDF printer when it is available,
-    because Word's own exporter rasterizes the OpenType-PS house faces (see
-    _print_to_adobe_pdf); otherwise it falls back to Word's exporter with a
-    warning.
-
-    Note: kills any leftover background winword.exe before starting. If
-    you have Word open with a document you care about, save first."""
-    _kill_stale_invisible_word()
-    import win32com.client
-    # Early binding (makepy) so NAMED arguments to PrintOut actually bind —
-    # with plain dynamic Dispatch they were silently mis-delivered and the
-    # PrintToFile/OutputFileName combination did nothing (19-Aug-2026).
+def _print_to_ms_pdf(word, doc, pdf_path: Path):
+    """Fallback PDF route: print through 'Microsoft Print to PDF' straight
+    to a file. Verified 2026-09-18 on the Board priorities document: the
+    OpenType-PS house fonts come through embedded (as CID TrueType), text is
+    selectable, 39 pp in 0.8 MB. Not as clean as Distiller (fonts are
+    renamed CIDFont+Fn) but far better than Word's exporter, which
+    rasterizes them. Restores the previous active printer afterwards."""
+    import time
+    if not _printer_available("Microsoft Print to PDF"):
+        raise RuntimeError("the 'Microsoft Print to PDF' printer is not "
+                           "installed (Windows optional feature)")
+    out = str(pdf_path.resolve())
     try:
-        word = win32com.client.gencache.EnsureDispatch('Word.Application')
+        Path(out).unlink()
+    except OSError:
+        pass
+    prev = word.ActivePrinter
+    try:
+        word.ActivePrinter = "Microsoft Print to PDF"
+        doc.PrintOut(Background=False, PrintToFile=True, OutputFileName=out)
+        # The spooler can finish a moment after PrintOut returns.
+        for _ in range(60):
+            if Path(out).exists() and Path(out).stat().st_size > 0:
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("Microsoft Print to PDF produced no file")
+    finally:
+        try:
+            word.ActivePrinter = prev
+        except Exception:
+            pass
+
+
+def _dismiss_adobe_pdf_dialog():
+    """Close the modal 'Adobe PDF' error box the printer driver leaves on
+    screen when it refuses to make PostScript (the 'rely on system fonts'
+    trap). Best effort; silent if there is none or win32gui is missing."""
+    try:
+        import win32gui, win32con
+    except ImportError:
+        return
+    def _cb(hwnd, found):
+        if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd) == "Adobe PDF":
+            found.append(hwnd)
+    found = []
+    try:
+        win32gui.EnumWindows(_cb, found)
+        for hwnd in found:
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
     except Exception:
-        word = win32com.client.Dispatch('Word.Application')
+        pass
+
+
+PDF_ENGINES = ("auto", "msprint", "distiller", "pdfmaker")
+
+
+def _pdf_engine():
+    """Which Windows PDF engine to use: the DSES_PDF_ENGINE environment
+    variable, one of msprint | distiller | pdfmaker | auto (default).
+
+    auto = msprint. Chosen 27-Sep-2026 after both Adobe routes trapped the
+    release build on this machine: the Adobe PDF driver and the PDFMaker
+    add-in both launch Acrobat.exe for "font capture" whenever a document
+    uses a glyph outside its fonts (the install guide's symbol characters),
+    and Acrobat.exe — broken since its Aug-2026 update — dies into a modal
+    "Font Capture: Windows - Application Error" box (0xc06d007e) that only
+    a human click dismisses: Distiller sat on it, PDFMaker hung Word on it.
+    'Microsoft Print to PDF' never touches Acrobat: fonts embedded (as CID
+    TrueType with anonymized names), text selectable and searchable, no
+    prompts once Word is early-bound. Distiller's named MinionPro/MyriadPro
+    subsets remain the nicer output — opt in with DSES_PDF_ENGINE=distiller
+    when Acrobat is healthy, and verify the PDF with tools/verify_pdf.py."""
+    name = (os.environ.get("DSES_PDF_ENGINE") or "auto").strip().lower()
+    if name not in PDF_ENGINES:
+        raise RuntimeError(f"DSES_PDF_ENGINE={name!r}: expected one of "
+                           f"{', '.join(PDF_ENGINES)}")
+    return "msprint" if name == "auto" else name
+
+
+def _word_app():
+    """An EARLY-BOUND Word.Application (pywin32 makepy wrapper), or raise.
+
+    Early binding is not optional: with a plain dynamic Dispatch the NAMED
+    arguments of PrintOut silently misbind, PrintToFile/OutputFileName are
+    lost, and Word puts up 'Save Print Output As' for someone to cancel
+    (27-Sep-2026; the 19-Aug-2026 variant wrote nothing at all). The usual
+    reason EnsureDispatch fails is a stale makepy cache after an Office
+    update (AttributeError ... CLSIDToClassMap / CLSIDToPackageMap): that
+    cache is purged and the binding retried once. Still failing -> raise;
+    this function never degrades to Dispatch."""
+    import shutil
+    import win32com
+    from win32com.client import gencache
+    last = None
+    for attempt in (1, 2):
+        try:
+            return gencache.EnsureDispatch('Word.Application')
+        except AttributeError as exc:
+            last = exc
+            if attempt == 2 or "CLSIDTo" not in str(exc):
+                break
+            cache = Path(win32com.__gen_path__)
+            print(f"build_doc: stale pywin32 makepy cache ({exc}); purging "
+                  f"{cache} and retrying", file=sys.stderr)
+            shutil.rmtree(cache, ignore_errors=True)
+            for name in [k for k in sys.modules if k.startswith("win32com.gen_py")]:
+                del sys.modules[name]
+            try:
+                gencache.GetGeneratePath()
+                gencache.Rebuild(verbose=0)
+            except Exception:
+                pass
+    raise RuntimeError(
+        f"Word could not be early-bound ({last}). Delete the pywin32 cache "
+        "folder %LOCALAPPDATA%/Temp/gen_py and rerun; a dynamic Dispatch is "
+        "refused because its PrintOut would stop on a print dialog.")
+
+
+class _DialogSentinel:
+    """Background thread that keeps a scripted print from parking on a
+    modal box nobody is there to click: print-to-file prompts get WM_CLOSE
+    (= Cancel, so the build fails instead of waiting) and the Acrobat
+    'Font Capture' crash box gets its OK button. Everything it touches is
+    reported on stderr. Best effort: the csrss hard-error box did not
+    always enumerate on 27-Sep-2026, so a stuck Adobe route can still end
+    only by timeout — which is why msprint is the default engine."""
+    CANCEL = {"Save Print Output As", "Save PDF File As", "Adobe PDF"}
+
+    def __init__(self):
+        import threading
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="pdf-dialog-sentinel")
+        self.handled = []
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=3)
+        return False
+
+    def _run(self):
+        try:
+            import win32con
+            import win32gui
+        except ImportError:
+            return
+
+        def scan(hwnd, acc):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if title in self.CANCEL or title.startswith("Font Capture"):
+                    acc.append((hwnd, title))
+
+        def press_ok(hwnd):
+            buttons = []
+
+            def child(h, acc):
+                if (win32gui.GetClassName(h) == "Button"
+                        and win32gui.GetWindowText(h).replace("&", "") == "OK"):
+                    acc.append(h)
+            win32gui.EnumChildWindows(hwnd, child, buttons)
+            for b in buttons:
+                win32gui.SendMessage(b, win32con.BM_CLICK, 0, 0)
+            return bool(buttons)
+
+        while not self._stop.is_set():
+            found = []
+            try:
+                win32gui.EnumWindows(scan, found)
+                for hwnd, title in found:
+                    if title.startswith("Font Capture"):
+                        what = "pressed OK on" if press_ok(hwnd) else "closed"
+                        if what == "closed":
+                            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                    else:
+                        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                        what = "cancelled"
+                    self.handled.append(title)
+                    print(f"build_doc: {what} the dialog {title!r}",
+                          file=sys.stderr)
+            except Exception:
+                pass
+            self._stop.wait(1.0)
+
+
+def _export_via_pdfmaker(word, doc, pdf_path: Path):
+    """Word's 'Save as Adobe PDF' (the Acrobat PDFMaker add-in), scripted —
+    DOCUMENT_STANDARDS section 8's preferred export when Acrobat is healthy
+    (named font subsets, bookmarks, links). Drives the add-in's IPDFMaker
+    interface from the AdobePDFMakerForOffice type library: the add-in's
+    Object exposes no type info, so pywin32 binds by interface IID.
+
+    STATUS 27-Sep-2026: reachable and settable (prompt/view/progress off,
+    output path honored), but CreatePDFEx launched the broken Acrobat.exe
+    for font capture, that crashed into its modal box and Word never came
+    back (RPC 'disconnected from its clients', no PDF). Opt-in only
+    (DSES_PDF_ENGINE=pdfmaker) until Acrobat is repaired."""
+    import time
+    import pythoncom
+    from win32com.client import gencache
+    mod = gencache.EnsureModule('{EA8D486A-09E6-411F-B452-78F075ACC8CC}', 0, 1, 0)
+    if mod is None:
+        raise RuntimeError("AdobePDFMakerForOffice type library not registered")
+    addin = word.COMAddIns.Item("PDFMaker.OfficeAddin")
+    if not addin.Connect:
+        raise RuntimeError("PDFMaker.OfficeAddin is not connected in Word")
+    raw = addin.Object._oleobj_
+    try:
+        raw = raw.QueryInterface(mod.IPDFMaker.CLSID, pythoncom.IID_IDispatch)
+    except pythoncom.com_error:
+        pass
+    maker = mod.IPDFMaker(raw)
+    settings = maker.GetCurrentConversionSettings()
+    if not isinstance(settings, mod.ISettings):
+        settings = mod.ISettings(settings._oleobj_)
+    if pdf_path.exists():
+        pdf_path.unlink()
+    settings.OutputPDFFileName = str(pdf_path.resolve())
+    settings.PromptForPDFFilename = False
+    settings.ViewPDFFile = False
+    settings.ShouldShowProgressDialog = False
+    maker.CreatePDFEx(settings, 0)
+    for _ in range(120):
+        if pdf_path.is_file() and pdf_path.stat().st_size > 0:
+            return
+        time.sleep(1.0)
+    raise RuntimeError("PDFMaker produced no PDF")
+
+
+def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
+    """Open the DOCX in Word, update every field (TOC + PAGE), save it, then
+    write the PDF through the engine _pdf_engine() names:
+
+      msprint   (default) 'Microsoft Print to PDF' via PrintOut/PrintToFile:
+                silent, no Acrobat involvement; fonts embedded, text
+                selectable (_print_to_ms_pdf).
+      distiller Word -> PostScript -> acrodist.exe (_print_to_adobe_pdf): the
+                nicest output (named MinionPro/MyriadPro subsets) when
+                Acrobat is healthy; falls back to msprint on failure.
+      pdfmaker  Word's 'Save as Adobe PDF' add-in (_export_via_pdfmaker);
+                falls back to msprint on failure.
+
+    Word's own exporter (SaveAs/ExportAsFixedFormat FileFormat=17) is never
+    used: it rasterizes the OpenType-PS house faces (tested 19-Aug-2026 and
+    18-Sep-2026 — image-only pages, no text layer). A dialog sentinel runs
+    during the print step so a modal print box cannot park the build on a
+    human. Kills orphaned invisible winword.exe processes first (a Word with
+    a visible window is left alone)."""
+    _kill_stale_invisible_word()
+    engine = _pdf_engine()
+    word = _word_app()
     word.Visible = False
+    try:
+        word.DisplayAlerts = 0          # wdAlertsNone
+    except Exception:
+        pass
+    used = engine
     try:
         doc = word.Documents.Open(str(docx_path.resolve()))
         try:
@@ -1080,22 +1405,43 @@ def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
             # Save the .docx so the populated TOC persists for future opens
             # in Word (otherwise the TOC reverts to the placeholder).
             doc.Save()
-            if _adobe_pdf_printer_available():
-                _print_to_adobe_pdf(word, doc, docx_path, pdf_path)
-            else:
-                print("WARNING: the 'Adobe PDF' printer was not found. Falling "
-                      "back to Word's own PDF export, which RASTERIZES "
-                      f"{FONT_BODY}/{FONT_HEAD} — the PDF will have no "
-                      "selectable text. Install Acrobat/Distiller, or set the "
-                      "FONT_* constants back to TrueType faces.",
-                      file=sys.stderr)
-                # wdFormatPDF = 17
-                doc.SaveAs(str(pdf_path.resolve()), FileFormat=17)
+            with _DialogSentinel():
+                if engine == "distiller":
+                    if not _adobe_pdf_printer_available():
+                        raise RuntimeError("DSES_PDF_ENGINE=distiller but the "
+                                           "'Adobe PDF' printer is not installed")
+                    try:
+                        _print_to_adobe_pdf(word, doc, docx_path, pdf_path)
+                    except Exception as exc:
+                        print("WARNING: the Distiller route failed "
+                              f"({type(exc).__name__}: {exc}).\n"
+                              "  Known causes: Acrobat.exe crashing in font "
+                              "capture (the 'Font Capture: Windows - "
+                              "Application Error' box), or the Adobe PDF "
+                              "printer option\n  'Rely on system fonts only; "
+                              "do not use document fonts' ticked again. "
+                              "Falling back to 'Microsoft Print to PDF'.",
+                              file=sys.stderr)
+                        _dismiss_adobe_pdf_dialog()
+                        used = "msprint (Distiller route failed)"
+                        _print_to_ms_pdf(word, doc, pdf_path)
+                elif engine == "pdfmaker":
+                    try:
+                        _export_via_pdfmaker(word, doc, pdf_path)
+                    except Exception as exc:
+                        print("WARNING: the PDFMaker route failed "
+                              f"({type(exc).__name__}: {exc}). Falling back "
+                              "to 'Microsoft Print to PDF'.", file=sys.stderr)
+                        used = "msprint (PDFMaker route failed)"
+                        _print_to_ms_pdf(word, doc, pdf_path)
+                else:
+                    _print_to_ms_pdf(word, doc, pdf_path)
         finally:
             doc.Close(SaveChanges=False)
     finally:
         word.Quit()
-    print(f"Wrote {pdf_path} ({pdf_path.stat().st_size // 1024} KB)")
+    print(f"Wrote {pdf_path} ({pdf_path.stat().st_size // 1024} KB) "
+          f"via {used}")
 
 
 def main():

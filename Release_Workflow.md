@@ -110,7 +110,15 @@ Note the version in the commit message.
 ./.conda/bin/python build_doc.py
 ```
 
-That reads `Installing.md` and produces `DSES_Radio_Astronomy_Workbench_Installation.pdf` (the deliverable). The styled DOCX it renders on the way is written to a temp file and removed automatically; pass `--docx <path>` if you want to keep it for a spot-check.
+That reads `Installing.md` and produces `DSES_Radio_Astronomy_Workbench_Installation.pdf` (the deliverable). The styled DOCX it renders on the way is written to a temp file and removed automatically; pass `--docx <path>` if you want to keep it for a spot-check. The cover's version line comes from `APP_VERSION` unless you pass `--version`.
+
+On Windows the PDF leaves Word through the "Microsoft Print to PDF" driver: silent, fonts embedded, text selectable. Set `DSES_PDF_ENGINE=distiller` for Acrobat Distiller's named font subsets when Acrobat is healthy (its font-capture step launches Acrobat.exe, which has been crashing into a modal "Font Capture" box since Aug 2026); Word's own PDF export is never used because it rasterizes the house fonts. If any print or save dialog appears during the build, the script is at fault (Word bound without its type library) — fix it, do not click through. Check the result before shipping it:
+
+```text
+python tools/verify_pdf.py DSES_Radio_Astronomy_Workbench_Installation.pdf "Version <version>"
+```
+
+That prints pages, extractable characters, and every embedded font, and fails if the text layer or the version stamp is missing (needs `pypdf`).
 
 Skip this step if you didn't change install-relevant behavior, but err on the side of rebuilding so the version stamps inside the PDF stay current.
 
