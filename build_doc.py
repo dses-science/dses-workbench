@@ -11,10 +11,11 @@ throwaway intermediate — it is written to a temp file and removed after the
 PDF is built, unless you pass --docx to keep it. PDF conversion uses
 LibreOffice on macOS/Linux and Microsoft Word on Windows (see
 convert_docx_to_pdf). On Windows the PDF is printed through a PDF printer
-driver, never Word's own exporter (it rasterizes the house fonts):
-'Microsoft Print to PDF' by default, Acrobat Distiller or the PDFMaker
-add-in on request (DSES_PDF_ENGINE=distiller|pdfmaker). The build must
-never stop on a dialog: if one appears, see _word_app / _DialogSentinel.
+driver, never Word's own exporter (it rasterizes the house fonts): Acrobat
+Distiller first (named font subsets), with an automatic, bounded fallback
+to 'Microsoft Print to PDF' when Acrobat's font-capture helper crashes or
+the print stalls; DSES_PDF_ENGINE=msprint|distiller|pdfmaker forces one.
+The build must never stop on a dialog: see _word_app / _DialogSentinel.
 
 Handles the Markdown subset used in Installing.md:
     # / ## / ###       — headings
@@ -152,8 +153,8 @@ DOC_ORG      = "DSES"
 # RASTERIZES them (verified 19-Aug-2026: Minion/Myriad runs came out as images
 # with no text layer, while TrueType Source Code Pro embedded fine), so the
 # Windows converter below prints through a PDF printer driver instead
-# ('Microsoft Print to PDF' by default since 27-Sep-2026; Adobe PDF/Distiller
-# on request — see _pdf_engine for why). If you change these back to
+# (Adobe PDF/Distiller first, 'Microsoft Print to PDF' as the automatic
+# fallback — see _pdf_engine). If you change these back to
 # TrueType faces (Calibri/Cambria/Consolas), the plain SaveAs path is
 # adequate again.
 FONT_BODY = "Minion Pro"
@@ -1048,7 +1049,82 @@ def _find_acrodist():
     return None
 
 
-def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path):
+def _word_printing(word):
+    """True while Word still has a background print job in flight."""
+    try:
+        return int(word.BackgroundPrintingStatus) > 0
+    except Exception:
+        return False
+
+
+def _newest_winword_pid(since):
+    """PID of the Word instance started after `since` (ours), or None."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    best = None
+    for p in psutil.process_iter(['name', 'pid', 'create_time']):
+        if (p.info.get('name') or '').lower() != 'winword.exe':
+            continue
+        if (p.info.get('create_time') or 0) >= since - 5:
+            if best is None or p.info['create_time'] > best[0]:
+                best = (p.info['create_time'], p.info['pid'])
+    return best[1] if best else None
+
+
+def _acrobat_helpers_since(t0):
+    """Acrobat.exe processes launched after t0 — the Adobe PDF driver starts
+    one for font capture — as (age_seconds, psutil.Process) pairs."""
+    try:
+        import psutil
+    except ImportError:
+        return []
+    out = []
+    now = __import__("time").time()
+    for p in psutil.process_iter(['name', 'create_time']):
+        if (p.info.get('name') or '').lower() == 'acrobat.exe':
+            ct = p.info.get('create_time') or 0
+            if ct >= t0 - 1:
+                out.append((now - ct, p))
+    return out
+
+
+def _kill_acrobat_helpers(t0):
+    """Kill the font-capture Acrobat.exe processes started after t0 (a
+    crashed one sits in its 'Font Capture' error box until killed). Returns
+    the pids killed."""
+    killed = []
+    for _, p in _acrobat_helpers_since(t0):
+        try:
+            pid = p.pid
+            p.kill()
+            killed.append(str(pid))
+        except Exception:
+            pass
+    return killed
+
+
+def _cancel_print_jobs(printer_name):
+    """Delete every job in the named printer's queue (best effort)."""
+    try:
+        import win32print
+        h = win32print.OpenPrinter(printer_name)
+        try:
+            for job in win32print.EnumJobs(h, 0, 999, 1):
+                try:
+                    win32print.SetJob(h, job['JobId'], 0, None,
+                                      win32print.JOB_CONTROL_DELETE)
+                except Exception:
+                    pass
+        finally:
+            win32print.ClosePrinter(h)
+    except Exception:
+        pass
+
+
+def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path,
+                        ps_timeout=120.0, helper_grace=15.0):
     """Produce the PDF via Word -> PostScript file -> Distiller, directly.
 
     Word's own exporter (SaveAs FileFormat=17) cannot embed OpenType-PS (CFF)
@@ -1062,9 +1138,20 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path):
     leftover it jams the queue with stacked modal error dialogs (19-Aug-2026
     incident). Instead, Word prints PostScript to a scratch FILE we name
     (PrintToFile), and acrodist.exe distills that file synchronously — fully
-    deterministic paths, no spooler, no dialogs."""
+    deterministic paths, no spooler, no dialogs.
+
+    BOUNDED since 27-Sep-2026: the print runs in Word's background so this
+    process keeps control. The Adobe driver launches Acrobat.exe for "font
+    capture" when a document uses a glyph outside its fonts (the install
+    guide's two symbol characters); a broken Acrobat.exe then dies into a
+    modal error box and the job never produces PostScript. If such a helper
+    has been alive for `helper_grace` seconds with no PostScript yet, or
+    nothing has arrived within `ps_timeout`, the helper is killed, the job
+    cancelled, and a RuntimeError sends the caller to the msprint fallback.
+    A synchronous PrintOut sat on that box until a human clicked OK."""
     import subprocess
     import shutil
+    import time
 
     acrodist = _find_acrodist()
     if acrodist is None:
@@ -1076,29 +1163,53 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path):
     out_pdf = scratch_dir / (pdf_path.stem + ".pdf")
 
     previous_printer = word.ActivePrinter
+    t0 = time.time()
+    killed = []
+    aborted = None
+    completed = False
     try:
         word.ActivePrinter = "Adobe PDF"
-        doc.PrintOut(Background=False, PrintToFile=True,
+        doc.PrintOut(Background=True, PrintToFile=True,
                      OutputFileName=str(ps_file))
+        last, stable = -1, 0
+        deadline = t0 + ps_timeout
+        abort_by = None
+        while True:
+            size = ps_file.stat().st_size if ps_file.is_file() else -1
+            busy = _word_printing(word)
+            if size > 0 and size == last:
+                stable += 1
+            else:
+                stable = 0
+            if size > 0 and stable >= 2 and not busy and abort_by is None:
+                completed = True
+                break
+            now = time.time()
+            helper_age = max([a for a, _ in _acrobat_helpers_since(t0)] or [0.0])
+            if abort_by is None and (now > deadline or
+                                     (size <= 0 and helper_age > helper_grace)):
+                aborted = ("Acrobat.exe font-capture helper alive %.0f s with "
+                           "no PostScript" % helper_age
+                           if helper_age > helper_grace else
+                           "no PostScript within %.0f s" % ps_timeout)
+                killed = _kill_acrobat_helpers(t0)
+                _cancel_print_jobs("Adobe PDF")
+                abort_by = now + 20.0
+            if abort_by is not None and (now > abort_by or not busy):
+                break
+            last = size
+            time.sleep(1.0)
     finally:
         try:
             word.ActivePrinter = previous_printer
         except Exception:
             pass
-    # PrintOut can return before the spooler finishes writing the file
-    # (observed on the install guide, 2026-08-19): poll until it exists and
-    # stops growing.
-    import time
-    last = -1
-    for _ in range(120):
-        if ps_file.is_file():
-            size = ps_file.stat().st_size
-            if size > 0 and size == last:
-                break
-            last = size
-        time.sleep(1.0)
-    if not ps_file.is_file() or ps_file.stat().st_size == 0:
-        raise RuntimeError(f"Word did not write the PostScript file {ps_file}")
+    if not completed:
+        detail = aborted or "print did not finish"
+        if killed:
+            detail += " — killed Acrobat.exe pid " + ", ".join(killed)
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+        raise RuntimeError(f"Word wrote no usable PostScript ({detail})")
 
     r = subprocess.run([str(acrodist), "/N", "/Q", str(ps_file)],
                        capture_output=True, text=True, timeout=300)
@@ -1173,25 +1284,31 @@ PDF_ENGINES = ("auto", "msprint", "distiller", "pdfmaker")
 
 def _pdf_engine():
     """Which Windows PDF engine to use: the DSES_PDF_ENGINE environment
-    variable, one of msprint | distiller | pdfmaker | auto (default).
+    variable, one of distiller | msprint | pdfmaker | auto (default).
 
-    auto = msprint. Chosen 27-Sep-2026 after both Adobe routes trapped the
-    release build on this machine: the Adobe PDF driver and the PDFMaker
-    add-in both launch Acrobat.exe for "font capture" whenever a document
-    uses a glyph outside its fonts (the install guide's symbol characters),
-    and Acrobat.exe — broken since its Aug-2026 update — dies into a modal
-    "Font Capture: Windows - Application Error" box (0xc06d007e) that only
-    a human click dismisses: Distiller sat on it, PDFMaker hung Word on it.
-    'Microsoft Print to PDF' never touches Acrobat: fonts embedded (as CID
-    TrueType with anonymized names), text selectable and searchable, no
-    prompts once Word is early-bound. Distiller's named MinionPro/MyriadPro
-    subsets remain the nicer output — opt in with DSES_PDF_ENGINE=distiller
-    when Acrobat is healthy, and verify the PDF with tools/verify_pdf.py."""
+    auto = distiller when the 'Adobe PDF' printer and acrodist.exe are
+    installed, else msprint. The Distiller attempt is BOUNDED and falls back
+    to msprint by itself (see _print_to_adobe_pdf), so the daily output —
+    named MinionPro/MyriadPro subsets — is produced whenever Acrobat
+    cooperates, and the build never waits on a human when it does not.
+
+    History (27-Sep-2026): the Adobe PDF driver and the PDFMaker add-in
+    both launch Acrobat.exe for "font capture" when a document uses a glyph
+    outside its fonts (the install guide's two symbol characters); that
+    day Acrobat.exe died into a modal "Font Capture: Windows - Application
+    Error" box (0xc06d007e) that only a human click dismissed — Distiller
+    sat on it, PDFMaker hung Word on it — and 1.6.0 was cut with msprint
+    as the default. Rick: "Distiller first with the fallback"; the bounded
+    attempt replaced that the same evening."""
     name = (os.environ.get("DSES_PDF_ENGINE") or "auto").strip().lower()
     if name not in PDF_ENGINES:
         raise RuntimeError(f"DSES_PDF_ENGINE={name!r}: expected one of "
                            f"{', '.join(PDF_ENGINES)}")
-    return "msprint" if name == "auto" else name
+    if name == "auto":
+        if _adobe_pdf_printer_available() and _find_acrodist() is not None:
+            return "distiller"
+        return "msprint"
+    return name
 
 
 def _word_app():
@@ -1236,15 +1353,17 @@ def _word_app():
 class _DialogSentinel:
     """Background thread that keeps a scripted print from parking on a
     modal box nobody is there to click: print-to-file prompts get WM_CLOSE
-    (= Cancel, so the build fails instead of waiting) and the Acrobat
-    'Font Capture' crash box gets its OK button. Everything it touches is
-    reported on stderr. Best effort: the csrss hard-error box did not
-    always enumerate on 27-Sep-2026, so a stuck Adobe route can still end
-    only by timeout — which is why msprint is the default engine."""
+    (= Cancel, so the build fails instead of waiting), any dialog owned by
+    OUR invisible Word instance (the 'Adobe PDF' printer-setup box, a
+    'Microsoft Word' alert) is closed the same way, and the Acrobat 'Font
+    Capture' crash box gets its OK button when it enumerates (it did not
+    always on 27-Sep-2026 — _print_to_adobe_pdf's helper kill covers that).
+    Everything it touches is reported on stderr."""
     CANCEL = {"Save Print Output As", "Save PDF File As", "Adobe PDF"}
 
-    def __init__(self):
+    def __init__(self, word_pid=None):
         import threading
+        self.word_pid = word_pid
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name="pdf-dialog-sentinel")
@@ -1263,14 +1382,22 @@ class _DialogSentinel:
         try:
             import win32con
             import win32gui
+            import win32process
         except ImportError:
             return
 
         def scan(hwnd, acc):
-            if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                if title in self.CANCEL or title.startswith("Font Capture"):
-                    acc.append((hwnd, title))
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+            title = win32gui.GetWindowText(hwnd)
+            if title in self.CANCEL or title.startswith("Font Capture"):
+                acc.append((hwnd, title))
+            elif self.word_pid and win32gui.GetClassName(hwnd) == "#32770":
+                try:
+                    if win32process.GetWindowThreadProcessId(hwnd)[1] == self.word_pid:
+                        acc.append((hwnd, title or "(untitled Word dialog)"))
+                except Exception:
+                    pass
 
         def press_ok(hwnd):
             buttons = []
@@ -1352,12 +1479,14 @@ def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
     """Open the DOCX in Word, update every field (TOC + PAGE), save it, then
     write the PDF through the engine _pdf_engine() names:
 
-      msprint   (default) 'Microsoft Print to PDF' via PrintOut/PrintToFile:
-                silent, no Acrobat involvement; fonts embedded, text
-                selectable (_print_to_ms_pdf).
-      distiller Word -> PostScript -> acrodist.exe (_print_to_adobe_pdf): the
-                nicest output (named MinionPro/MyriadPro subsets) when
-                Acrobat is healthy; falls back to msprint on failure.
+      distiller (default when installed) Word -> PostScript -> acrodist.exe
+                (_print_to_adobe_pdf): the daily output, named MinionPro/
+                MyriadPro subsets. The attempt is bounded — a crashed
+                font-capture helper is killed and the build falls back to
+                msprint by itself.
+      msprint   'Microsoft Print to PDF' via PrintOut/PrintToFile: silent, no
+                Acrobat involvement; fonts embedded, text selectable
+                (_print_to_ms_pdf).
       pdfmaker  Word's 'Save as Adobe PDF' add-in (_export_via_pdfmaker);
                 falls back to msprint on failure.
 
@@ -1367,9 +1496,12 @@ def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
     during the print step so a modal print box cannot park the build on a
     human. Kills orphaned invisible winword.exe processes first (a Word with
     a visible window is left alone)."""
+    import time
     _kill_stale_invisible_word()
     engine = _pdf_engine()
+    t_start = time.time()
     word = _word_app()
+    word_pid = _newest_winword_pid(t_start)
     word.Visible = False
     try:
         word.DisplayAlerts = 0          # wdAlertsNone
@@ -1405,7 +1537,7 @@ def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
             # Save the .docx so the populated TOC persists for future opens
             # in Word (otherwise the TOC reverts to the placeholder).
             doc.Save()
-            with _DialogSentinel():
+            with _DialogSentinel(word_pid):
                 if engine == "distiller":
                     if not _adobe_pdf_printer_available():
                         raise RuntimeError("DSES_PDF_ENGINE=distiller but the "
@@ -1413,17 +1545,18 @@ def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
                     try:
                         _print_to_adobe_pdf(word, doc, docx_path, pdf_path)
                     except Exception as exc:
-                        print("WARNING: the Distiller route failed "
+                        print("NOTE: the Distiller route failed "
                               f"({type(exc).__name__}: {exc}).\n"
                               "  Known causes: Acrobat.exe crashing in font "
                               "capture (the 'Font Capture: Windows - "
                               "Application Error' box), or the Adobe PDF "
                               "printer option\n  'Rely on system fonts only; "
                               "do not use document fonts' ticked again. "
-                              "Falling back to 'Microsoft Print to PDF'.",
+                              "Falling back to 'Microsoft Print to PDF' "
+                              "(fonts embedded, text selectable).",
                               file=sys.stderr)
                         _dismiss_adobe_pdf_dialog()
-                        used = "msprint (Distiller route failed)"
+                        used = f"msprint (Distiller route failed: {exc})"
                         _print_to_ms_pdf(word, doc, pdf_path)
                 elif engine == "pdfmaker":
                     try:

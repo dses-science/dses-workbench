@@ -11,7 +11,7 @@ application or of the document build.
 
 Reading the font list: Distiller output names its subsets (ABCDEF+MinionPro-
 Regular, CFF/OpenType programs); 'Microsoft Print to PDF' — build_doc.py's
-default engine since 27-Sep-2026 — embeds them as anonymized CIDFont+F1…
+automatic fallback when Distiller fails — embeds them as anonymized CIDFont+F1…
 TrueType programs. Both are selectable, searchable text; Word's own exporter
 would show image-only pages and almost no characters."""
 import sys

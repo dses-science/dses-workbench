@@ -15,9 +15,9 @@ az/el in ezRA headers (f70f603 — the Pi re-enters az 359.9176 / el 87.4457
 when it takes this release at a scan break), control docks limited to the
 left/right columns (e8e6ed9), the patient WSL probe behind the automatic
 PRESTO analysis (a44a0e5), the k0gd@cnssys.com contact address, and — from
-the cut itself — build_doc.py's silent PDF engine (Microsoft Print to PDF by
-default; Distiller/PDFMaker opt-in; stale-makepy-cache auto-heal) with
-tools/verify_pdf.py. zip sha256 `1cd1e447…` (64,619,739 bytes), sidecar,
+the cut itself — build_doc.py's silent PDF build (Distiller first with a
+bounded, automatic fallback to Microsoft Print to PDF; stale-makepy-cache
+auto-heal) with tools/verify_pdf.py. zip sha256 `1cd1e447…` (64,619,739 bytes), sidecar,
 guide PDF (cover 1.6.0, §9 gained Drift-Scan Review + Start at), manifest in
 `sw_distribution/dses-workbench/`, legacy `b210_sa/manifest.json` rewritten;
 36 forward-slash entries, one top folder, completeness guard, staging import
