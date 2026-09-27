@@ -2988,7 +2988,9 @@ a column runs out of room Qt stacks panels as tabs along its edge — those
 tabs are colored (pastel blue, DSES teal when selected) so the stack is easy
 to spot. The two display panels are deliberately restricted to the left column
 (they describe the plots, so they stay next to them) — they can still be
-reordered there, tabbed together, or floated freely. The
+reordered there, tabbed together, or floated freely. Control panels dock in
+either column but never along the top or bottom of the window, so a panel on
+its way to a floating spot is not snapped into a strip across the top. The
 menu bar (File / View / Radio / Recording / Help) duplicates the important
 actions, and long status messages — recording filenames, analysis progress —
 appear in the full-width <b>status bar</b> at the bottom of the window where
@@ -6505,10 +6507,16 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                        allowed=None, min_width=290):
             dock = QtWidgets.QDockWidget(title, self)
             dock.setObjectName(objname)          # required for saveState()
-            if allowed is not None:
-                # Restrict where the dock may DROP (e.g. display panels are
-                # left-column-only); floating is always still allowed.
-                dock.setAllowedAreas(allowed)
+            # Restrict where the dock may DROP; floating is always allowed.
+            # The layout has two columns and nothing else: display panels are
+            # left-column-only, and every other panel may dock left or right
+            # but never top or bottom — with those allowed, a panel being
+            # dragged to a floating spot snapped into a full-width strip
+            # across the top of the window before it got there (Rick,
+            # 2026-09-27).
+            if allowed is None:
+                allowed = Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
+            dock.setAllowedAreas(allowed)
             box = QtWidgets.QWidget()
             lay = QtWidgets.QVBoxLayout(box)
             lay.setContentsMargins(2, 2, 2, 2)
