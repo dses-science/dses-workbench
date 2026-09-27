@@ -251,6 +251,13 @@ DEFAULTS = {
         # Optional target recording length; blank = record until stopped. Accepts
         # minutes ("30") or H:MM / HH:MM:SS ("1:30"); auto-stops when reached.
         'rec_duration':    '',
+        # Optional scheduled START (2026-09-26); blank = start the moment Record
+        # is set. A clock time "HH:MM[:SS]" (its next occurrence), a delay "+30"
+        # / "+1:30", or a date "YYYY-MM-DD HH:MM[:SS]", read as UTC or local
+        # time per rec_start_tz. Record then ARMS: the counter counts down to
+        # the start and the recording starts itself.
+        'rec_start':       '',
+        'rec_start_tz':    'UTC',
         # Run the canned PRESTO pipeline (readfile + rfifind + catalog fold
         # -> self-contained PDF) automatically when a .fil recording stops.
         'analyze_when_done': True,
@@ -3283,6 +3290,16 @@ follow the dish's proven ezCol geometry and are adjustable via
 <code>H:MM</code> / <code>HH:MM:SS</code> (e.g. <code>1:30</code>). The recording
 auto-stops when it is reached and the counter shows a countdown; blank records
 until you stop it. Locked while recording.</li>
+<li><b>Start at</b>: optional scheduled start — a clock time
+(<code>03:15</code>, the next time it comes round), a delay
+(<code>+30</code> minutes, <code>+1:30</code>), or a full date
+(<code>2026-10-24 03:15</code>), read as UTC or your local clock per the
+selector beside it. Setting <b>Record</b> to <i>Recording</i> then <i>arms</i>
+instead of starting: the status turns amber, the counter shows a countdown
+to the start (and, with <b>Record for</b>, the planned end), the
+source-visibility and hydrogen-line questions are asked up front so the
+start itself needs nobody at the keyboard, and <i>Stopped</i> cancels. Blank
+starts at once.</li>
 <li><b>Record</b>: <i>Stopped</i> / <i>Recording</i>. Recording always
 starts <i>Stopped</i> on launch. While recording, a red <b>REC</b> counter
 shows elapsed time (or the countdown when a duration is set).</li>
@@ -6653,6 +6670,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         # elapsed counter, red REC indicator, "record for" duration + auto-stop).
         self._source_name = self._app_settings.get_str('recording', 'source_name')
         self._rec_duration_text = self._app_settings.get_str('recording', 'rec_duration')
+        self._rec_start_text = self._app_settings.get_str('recording', 'rec_start')
+        self._rec_start_tz = (self._app_settings.get_str('recording', 'rec_start_tz')
+                              or 'UTC')
         # Manual fold override (known-period source without a catalog entry,
         # e.g. the lab pulsar simulator): forces a full prepfold -topo -p.
         self._fold_period_ms = self._app_settings.get_str('recording', 'fold_period_ms')
@@ -6662,6 +6682,12 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._rec_timer = QtCore.QTimer(self)
         self._rec_timer.setInterval(1000)
         self._rec_timer.timeout.connect(self._tick_recording)
+        # Scheduled start: the unix time an ARMED recording fires at (None when
+        # not armed); the 1 Hz wait timer paints the countdown and fires it.
+        self._rec_sched_ts = None
+        self._rec_wait_timer = QtCore.QTimer(self)
+        self._rec_wait_timer.setInterval(1000)
+        self._rec_wait_timer.timeout.connect(self._tick_armed)
 
         self._recording_dir_button = QtWidgets.QPushButton("Folder: " + self._elided_dir())
         self._recording_dir_button.setToolTip(self.recording_dir)
@@ -7000,6 +7026,40 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._rec_duration_edit.editingFinished.connect(self._on_rec_duration_changed)
         _dur_row.addWidget(self._rec_duration_edit, 1)
         self._record_group_layout.addWidget(self._rec_duration_widget)
+
+        # --- Optional scheduled start (Rick, 2026-09-26) -------------------
+        # Setting Record with a time here ARMS instead of starting: the counter
+        # counts down, the safety questions are asked up front, and the
+        # recording starts itself with nobody at the keyboard.
+        self._rec_start_widget = QtWidgets.QWidget(self)
+        _st_row = QtWidgets.QHBoxLayout(self._rec_start_widget)
+        _st_row.setContentsMargins(0, 0, 0, 0)
+        _st_row.addWidget(QtWidgets.QLabel("Start at:"))
+        self._rec_start_edit = QtWidgets.QLineEdit(self._rec_start_text)
+        self._rec_start_edit.setPlaceholderText("HH:MM, +min, or date")
+        self._rec_start_edit.setToolTip(
+            "Optional scheduled start. Forms:\n"
+            "  03:15         a clock time - the next time it comes round\n"
+            "  +30  +1:30    a delay from when you set Record (minutes, or H:MM)\n"
+            "  2026-10-24 03:15   a full date and time\n"
+            "Read as UTC or your local clock per the selector. Setting Record to\n"
+            "Recording then ARMS: the counter shows a countdown to the start (and\n"
+            "the planned end when Record for is set), the source-visibility and\n"
+            "hydrogen-line checks are asked now, and the recording starts itself.\n"
+            "Stopped cancels. Leave blank to start at once.")
+        self._rec_start_edit.editingFinished.connect(self._on_rec_start_changed)
+        _st_row.addWidget(self._rec_start_edit, 1)
+        self._rec_start_tz_combo = QtWidgets.QComboBox()
+        self._rec_start_tz_combo.addItems(["UTC", "Local"])
+        self._rec_start_tz_combo.setCurrentText(
+            "Local" if self._rec_start_tz == "Local" else "UTC")
+        self._rec_start_tz_combo.setToolTip(
+            "How to read the Start at time: UTC (the convention in every file\n"
+            "this program writes and in the pulsar planner) or this computer's\n"
+            "local clock.")
+        self._rec_start_tz_combo.currentTextChanged.connect(self._on_rec_start_changed)
+        _st_row.addWidget(self._rec_start_tz_combo)
+        self._record_group_layout.addWidget(self._rec_start_widget)
 
         # --- Record selector ---
         self._record_options = [0, 1]
@@ -7977,10 +8037,11 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                 + (f", P0 {r['p0_s']:.6f} s, DM {r['dm']:.2f}"
                    if r["p0_s"] and r["dm"] else "") + when, 15000)
 
-    def _check_source_visibility(self):
+    def _check_source_visibility(self, start_ts=None):
         """Warn if the named source sets before a timed recording finishes.
         Returns True to proceed. Silent when there is no catalog loaded, no
-        source name, or no duration — the planner is an aid, not a gate."""
+        source name, or no duration — the planner is an aid, not a gate.
+        `start_ts`: evaluate from a scheduled start instead of from now."""
         import pulsar_planner
         cat = getattr(self, '_psr_catalog', None)
         name = (self._source_name or "").strip()
@@ -7992,17 +8053,22 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             return True
         site = self._site_dict()
         sets, left = pulsar_planner.sets_before(
-            row, site["lat_deg"], site["lon_deg"], site["mask_deg"], dur)
+            row, site["lat_deg"], site["lon_deg"], site["mask_deg"], dur,
+            unix_ts=start_ts)
         if not sets:
             return True
         mins = left * 60.0
+        when = (f"at the scheduled start ({self._fmt_clock_tz(start_ts)})"
+                if start_ts is not None else "now")
+        problem = (f"{name} is below the {site['mask_deg']:.0f}° elevation "
+                   f"mask {when}." if mins < 0.5 else
+                   f"{name} drops below the {site['mask_deg']:.0f}° elevation "
+                   f"mask {mins:.0f} minutes after the start ({when}), but the "
+                   f"recording is set to run for {dur / 60.0:.0f} minutes.")
         r = QtWidgets.QMessageBox.warning(
             self, "Source sets before the recording ends",
-            f"{name} drops below the {site['mask_deg']:.0f}° elevation mask "
-            f"in {mins:.0f} minutes, but the recording is set to run for "
-            f"{dur / 60.0:.0f} minutes.\n\n"
-            "The tail of the recording would be of an empty sky.\n\n"
-            "Record anyway?",
+            problem + "\n\nThe tail of the recording would be of an empty "
+            "sky.\n\nRecord anyway?",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No)
         return r == QtWidgets.QMessageBox.Yes
@@ -8964,20 +9030,40 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         lbl.setToolTip(lbl.toolTip().split('\n\nWarning:')[0]
                        + (f"\n\nWarning: {warn}." if warn else ""))
 
-    def _start_recording(self):
+    def _start_recording(self, scheduled=False):
         """Begin recording in the selected format. Filterbank (.fil) channelizes
-        live and writes a SIGPROC file directly; raw I/Q goes to a SigMF pair."""
+        live and writes a SIGPROC file directly; raw I/Q goes to a SigMF pair.
+
+        With a "Start at" time set this ARMS instead: the questions that can
+        stop a recording (source below the mask, hydrogen line out of band)
+        are asked now, while someone is at the keyboard, and the wait timer
+        calls back with scheduled=True at the instant — that call must never
+        ask anything."""
         if self._playback_mode or self.uhd_usrp_source_0 is None:
             return  # nothing real to record from
-        if not self._check_source_visibility():
-            self.record = 0
-            self._record_callback(0)
-            return
+        start_ts = None
+        if not scheduled:
+            try:
+                start_ts = self._parse_start_ts(self._rec_start_text,
+                                                self._rec_start_tz != "Local")
+            except ValueError as exc:
+                QtWidgets.QMessageBox.warning(
+                    self, "Start time not understood",
+                    f"{exc}\n\nUse HH:MM (the next time it comes round), "
+                    "+minutes or +H:MM (a delay), or YYYY-MM-DD HH:MM. "
+                    "Leave it blank to start at once.")
+                self.record = 0
+                self._record_callback(0)
+                return
+            if not self._check_source_visibility(start_ts=start_ts):
+                self.record = 0
+                self._record_callback(0)
+                return
         # ezRA drift scans near-but-off the hydrogen line get a hard stop
         # at record START — the consequences-line warning lives in the
         # Observation dock, which may be closed (how a hydrogen-free "HI"
         # run got recorded on 2026-09-12/13 despite the 1.5.1 warning).
-        if self._record_format == 'ezra':
+        if self._record_format == 'ezra' and not scheduled:
             gap = self._hi_band_gap()
             if gap is not None:
                 resp = QtWidgets.QMessageBox.warning(
@@ -8993,6 +9079,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                     self.record = 0
                     self._record_callback(0)
                     return
+        if start_ts is not None and start_ts - time.time() > 1.0:
+            self._arm_scheduled_start(start_ts)   # wait; _tick_armed starts it
+            return
         self._update_fil_geom_enabled()  # lock geometry while live
         if self._record_format == 'fil':
             self._start_fil_recording()
@@ -9592,7 +9681,10 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
 
     def _stop_recording(self):
         """Pull whichever recording sink is active out of the flowgraph and
-        finalize its file."""
+        finalize its file. Armed but not yet recording: just cancel."""
+        if self._rec_sched_ts is not None:
+            self._cancel_scheduled_start("Idle (scheduled start cancelled)")
+            return
         if self._fil_sink is not None:
             self._stop_fil_recording()
         elif self._ezra_sink is not None:
@@ -9787,6 +9879,125 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._rec_duration_text = self._rec_duration_edit.text().strip()
         self._save_setting('recording', 'rec_duration', self._rec_duration_text)
 
+    def _on_rec_start_changed(self, *_):
+        self._rec_start_text = self._rec_start_edit.text().strip()
+        self._rec_start_tz = self._rec_start_tz_combo.currentText()
+        self._save_setting('recording', 'rec_start', self._rec_start_text)
+        self._save_setting('recording', 'rec_start_tz', self._rec_start_tz)
+
+    @staticmethod
+    def _parse_start_ts(text, utc=True, now=None):
+        """"Start at" text -> unix time, or None for blank. Raises ValueError
+        for anything else, so a typo cannot silently start a recording now.
+
+        Forms: "HH:MM[:SS]" = the next time that clock reading comes round
+        (today if still ahead, else tomorrow); "+30" / "+1:30" = a delay in
+        minutes or H:MM from now; "YYYY-MM-DD HH:MM[:SS]" = that instant.
+        `utc` says how to read the clock; local time goes through mktime so
+        a wall-clock time stays a wall-clock time across a DST change."""
+        import calendar
+        t = (text or "").strip()
+        if not t:
+            return None
+        now = time.time() if now is None else now
+        if t.startswith("+"):
+            secs = dses_workbench._parse_duration_s(t[1:])
+            if secs <= 0:
+                raise ValueError(f"delay {t!r} is not minutes or H:MM")
+            return now + secs
+        m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?", t)
+        if m:
+            y, mo, d, h, mi, sec = (int(x or 0) for x in m.groups())
+            if not (0 <= h < 24 and 0 <= mi < 60 and 0 <= sec < 60):
+                raise ValueError(f"time of day out of range in {t!r}")
+            parts = (y, mo, d, h, mi, sec, 0, 1, -1)
+            return float(calendar.timegm(parts) if utc else time.mktime(parts))
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", t)
+        if m:
+            h, mi, sec = (int(x or 0) for x in m.groups())
+            if not (0 <= h < 24 and 0 <= mi < 60 and 0 <= sec < 60):
+                raise ValueError(f"time of day out of range in {t!r}")
+            st = time.gmtime(now) if utc else time.localtime(now)
+            today = (st.tm_year, st.tm_mon, st.tm_mday, h, mi, sec, 0, 1, -1)
+            if utc:
+                ts = float(calendar.timegm(today))
+                return ts if ts > now else ts + 86400.0
+            ts = float(time.mktime(today))
+            if ts > now:
+                return ts
+            tomorrow = (st.tm_year, st.tm_mon, st.tm_mday + 1, h, mi, sec, 0, 1, -1)
+            return float(time.mktime(tomorrow))   # mktime normalizes the day
+        raise ValueError(f"start time {t!r} not understood")
+
+    def _fmt_clock_tz(self, ts):
+        """A clock reading in the Start at zone, with the date when it is not
+        today's: "03:15 UTC" / "21:15 local on 2026-10-24"."""
+        utc = self._rec_start_tz != "Local"
+        st = time.gmtime(ts) if utc else time.localtime(ts)
+        today = time.gmtime() if utc else time.localtime()
+        out = time.strftime("%H:%M", st) + (" UTC" if utc else " local")
+        if (st.tm_year, st.tm_yday) != (today.tm_year, today.tm_yday):
+            out += time.strftime(" on %Y-%m-%d", st)
+        return out
+
+    def _arm_scheduled_start(self, start_ts):
+        """Wait for the scheduled instant: amber ARMED status, countdown in
+        the counter slot, the timed-recording controls locked as if live."""
+        self._rec_sched_ts = float(start_ts)
+        self._recording_status.setText(
+            f"Armed — recording starts at {self._fmt_clock_tz(start_ts)}")
+        self._recording_status.setStyleSheet(
+            "color: black; background-color: #f5b041;"
+            " padding: 2px 4px; border-radius: 3px;")     # amber = ARMED
+        self._source_name_widget.setEnabled(False)
+        self._rec_duration_widget.setEnabled(False)
+        self._rec_start_widget.setEnabled(False)
+        self._rec_elapsed_label.setStyleSheet(
+            "color: #b9770e; font-weight: bold;")          # amber countdown
+        self._rec_elapsed_label.setVisible(True)
+        self._tick_armed()
+        self._rec_wait_timer.start()
+
+    def _cancel_scheduled_start(self, note="Idle"):
+        """Leave the armed state without recording (Stopped, or a failed
+        fire). Idempotent."""
+        self._rec_wait_timer.stop()
+        self._rec_sched_ts = None
+        self._recording_status.setStyleSheet("")
+        self._recording_status.setText(note)
+        self._source_name_widget.setEnabled(True)
+        self._rec_duration_widget.setEnabled(True)
+        self._rec_start_widget.setEnabled(True)
+        self._rec_elapsed_label.setVisible(False)
+        self._rec_elapsed_label.setText("")
+        self._rec_elapsed_label.setStyleSheet(
+            "color: #e74c3c; font-weight: bold;")
+
+    def _tick_armed(self):
+        """1 Hz while armed: paint the countdown; at the instant, fire."""
+        if self._rec_sched_ts is None:
+            return
+        left = self._rec_sched_ts - time.time()
+        if left > 0.5:
+            dur = self._parse_duration_s(self._rec_duration_text)
+            txt = (f"⏱ starts in {self._fmt_hms(round(left))}"
+                   f"  (at {self._fmt_clock_tz(self._rec_sched_ts)})")
+            if dur > 0:
+                txt += (f", then records {self._fmt_hms(dur)} until "
+                        f"{self._fmt_clock_tz(self._rec_sched_ts + dur)}")
+            self._rec_elapsed_label.setText(txt)
+            return
+        # The instant. Leave the armed state first so the start runs the
+        # real path, then start with the questions already answered.
+        self._rec_wait_timer.stop()
+        self._rec_sched_ts = None
+        self._start_recording(scheduled=True)
+        if self._rec_start_time is None:            # nothing started (radio gone?)
+            self._cancel_scheduled_start(
+                "Scheduled start failed: no recording source")
+            self.record = 0
+            self._record_callback(0)
+
     @staticmethod
     def _sanitize_name(name):
         """A filesystem-safe token from a source name ('' if nothing usable)."""
@@ -9871,6 +10082,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             " padding: 2px 4px; border-radius: 3px;")     # red = RECORDING
         self._source_name_widget.setEnabled(False)        # locked in for this file
         self._rec_duration_widget.setEnabled(False)
+        self._rec_start_widget.setEnabled(False)
+        self._rec_elapsed_label.setStyleSheet(
+            "color: #e74c3c; font-weight: bold;")          # red REC (amber while armed)
         self._rec_elapsed_label.setVisible(True)
         self._tick_recording()                             # paint 0:00 at once
         self._rec_timer.start()
@@ -9885,6 +10099,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._recording_status.setStyleSheet("")           # back to normal colour
         self._source_name_widget.setEnabled(True)
         self._rec_duration_widget.setEnabled(True)
+        self._rec_start_widget.setEnabled(True)
         self._rec_elapsed_label.setVisible(False)
         self._rec_elapsed_label.setText("")
 

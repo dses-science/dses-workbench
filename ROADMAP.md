@@ -6,6 +6,27 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## Unreleased on main (next cut = 1.6.0 per the 2026-09-19 plan: Drift-Scan Review + f70f603, after the sag rollover)
+
+- [x] **Recording: SCHEDULED START ("Start at") — landed 2026-09-26** (Rick's
+      TODO, same day: "the recording has a duration setting but needs an
+      optional start time, with a countdown to the start; the countdown to
+      the finish is already there"). New `Start at:` row under `Record for:`
+      with a UTC/Local selector; forms `HH:MM[:SS]` (next occurrence), `+30`
+      / `+1:30` (delay), `YYYY-MM-DD HH:MM[:SS]`. Setting Record → Recording
+      ARMS: amber status "Armed — recording starts at …", the counter slot
+      shows an amber "⏱ starts in H:MM:SS (at …), then records … until …",
+      the source-visibility question is evaluated AT the scheduled instant
+      (`sets_before(unix_ts=)`; "below the mask at the scheduled start" when
+      so) and the hydrogen-line question asked up front, so the 1 Hz fire
+      (`_start_recording(scheduled=True)`) never asks anything; Stopped
+      cancels; a fire with no radio resets Record to Stopped with a status
+      note; the timed-recording controls lock while armed as while
+      recording. Settings `[recording] rec_start` / `rec_start_tz`. A typo
+      is refused with a dialog rather than starting now. Tests:
+      test_rec_schedule.py (parser pinned against a fixed clock in UTC and
+      local, 24 checks). Help + Installing.md §9 synced.
+
 ## v1.5.0 — SHIPPED 2026-09-11 (cut + published from Windows, release commit 6ed8d46, tag v1.5.0)
 
 **Versioning from here (Rick, 2026-09-11):** feature release = second
