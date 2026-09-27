@@ -6,7 +6,23 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
-## Unreleased on main (next cut = 1.6.0 per the 2026-09-19 plan: Drift-Scan Review + f70f603, after the sag rollover)
+## v1.6.0 — SHIPPED 2026-09-27 (cut + published from Windows, release commit dc0a936, tag v1.6.0; Rick: "Release 1.6.0 now with what's on main. Ray needs it today.")
+
+Feature release (second digit) per the 1.5.0 rule. Contents since v1.5.3:
+the Drift-Scan Review quicklook (Observe menu; ff0ff56, its own ROADMAP
+item below), the scheduled recording start below (dbd960f), full-precision
+az/el in ezRA headers (f70f603 — the Pi re-enters az 359.9176 / el 87.4457
+when it takes this release at a scan break), control docks limited to the
+left/right columns (e8e6ed9), the patient WSL probe behind the automatic
+PRESTO analysis (a44a0e5), the k0gd@cnssys.com contact address, and — from
+the cut itself — build_doc.py's silent PDF engine (Microsoft Print to PDF by
+default; Distiller/PDFMaker opt-in; stale-makepy-cache auto-heal) with
+tools/verify_pdf.py. zip sha256 `1cd1e447…` (64,619,739 bytes), sidecar,
+guide PDF (cover 1.6.0, §9 gained Drift-Scan Review + Start at), manifest in
+`sw_distribution/dses-workbench/`, legacy `b210_sa/manifest.json` rewritten;
+36 forward-slash entries, one top folder, completeness guard, staging import
+of 12 modules + shim; live verification through updater.py's own flow from
+BOTH manifest URLs = PASS; 1.5.3 zip still 200.
 
 - [x] **Recording: SCHEDULED START ("Start at") — landed 2026-09-26** (Rick's
       TODO, same day: "the recording has a duration setting but needs an
