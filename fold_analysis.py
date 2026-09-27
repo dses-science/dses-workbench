@@ -187,11 +187,18 @@ class PrestoRunner:
                     presto_bridge = None
             else:
                 presto_bridge = presto_bridge
-            if presto_bridge is not None and presto_bridge.wsl_available():
-                probe = presto_bridge.run("bash", "-c", "command -v prepfold")
-                if probe.returncode == 0 and probe.stdout.strip():
-                    self.mode = "wsl"
-                    self._bridge = presto_bridge
+            self._wsl_state = "no-bridge"
+            if presto_bridge is not None:
+                if presto_bridge.wsl_available():
+                    probe = presto_bridge.run("bash", "-c", "command -v prepfold")
+                    if probe.returncode == 0 and probe.stdout.strip():
+                        self.mode = "wsl"
+                        self._bridge = presto_bridge
+                    else:
+                        self._wsl_state = "no-prepfold"
+                else:
+                    self._wsl_state = "unreachable"
+                    self._wsl_error = getattr(presto_bridge, "LAST_ERROR", "")
 
     @property
     def available(self):
@@ -202,6 +209,19 @@ class PrestoRunner:
             return f"native PRESTO ({self._bindir})"
         if self.mode == "wsl":
             return "PRESTO in WSL via presto_bridge"
+        if sys.platform == "win32":
+            state = getattr(self, "_wsl_state", "no-bridge")
+            if state == "unreachable":
+                why = getattr(self, "_wsl_error", "") or "no answer"
+                return ("PRESTO lives in WSL on Windows, and WSL did not "
+                        f"answer ({why}). The first call after WSL has idled "
+                        "out can take a minute while it starts, so try the "
+                        "analysis again; if it keeps failing, run "
+                        "`wsl -d Ubuntu -- true` in a terminal to see why.")
+            if state == "no-prepfold":
+                return ("WSL answered, but prepfold is not on its PATH — run "
+                        "presto/build_presto.sh inside the Ubuntu distro (it "
+                        "writes ~/.presto_env, which every call sources).")
         return ("PRESTO not found — looked on PATH, $PRESTO, and every conda "
                 "env. Install it (Mac/Linux) or run presto/build_presto.sh "
                 "inside WSL (Windows).")

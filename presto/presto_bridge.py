@@ -14,6 +14,7 @@ Quick self-test (from a Windows shell / the radioconda python):
 from __future__ import annotations
 
 import os
+import time
 import shlex
 import subprocess
 import sys
@@ -58,17 +59,39 @@ def _maybe_path(arg) -> str:
     return s
 
 
-def wsl_available(distro: str = DEFAULT_DISTRO) -> bool:
-    """True if wsl.exe launches and the named distro is reachable. Cheap check
-    the app can call once at startup to decide whether to expose PRESTO
-    features."""
-    try:
-        r = subprocess.run([_wsl(), "-d", distro, "--", "true"],
-                           capture_output=True, text=True, timeout=30,
-                           encoding="utf-8", errors="replace", env=_env())
-        return r.returncode == 0
-    except Exception:
-        return False
+# Why the last wsl_available() said no (for the message the user sees).
+LAST_ERROR = ""
+
+
+def wsl_available(distro: str = DEFAULT_DISTRO, attempts: int = 3,
+                  wait_s: float = 5.0) -> bool:
+    """True if wsl.exe launches and the named distro is reachable.
+
+    Patient on purpose (2026-09-27): after WSL has idled out, the first call
+    boots its VM and the distro, which can outlast one probe on a busy
+    machine — the automatic analysis after a recording once reported
+    "PRESTO not found" and then found it 12 s later. So: up to `attempts`
+    probes of 45 s with a short pause between, and the last failure text is
+    kept in LAST_ERROR. Callers run this on a worker thread."""
+    global LAST_ERROR
+    last = ""
+    for i in range(max(1, attempts)):
+        try:
+            r = subprocess.run([_wsl(), "-d", distro, "--", "true"],
+                               capture_output=True, text=True, timeout=45,
+                               encoding="utf-8", errors="replace", env=_env())
+            if r.returncode == 0:
+                LAST_ERROR = ""
+                return True
+            last = (r.stderr or r.stdout or "").strip() or f"exit {r.returncode}"
+        except subprocess.TimeoutExpired:
+            last = "no answer from wsl.exe within 45 s"
+        except Exception as exc:                    # wsl.exe missing, etc.
+            last = f"{type(exc).__name__}: {exc}"
+        if i + 1 < attempts:
+            time.sleep(wait_s)
+    LAST_ERROR = last
+    return False
 
 
 def _exec(inner_cmd: str, distro: str = DEFAULT_DISTRO, cwd_win=None,
