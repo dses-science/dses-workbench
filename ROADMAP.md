@@ -759,7 +759,12 @@ menu bar!) + drift-scan box test (dock behavior on headless Openbox/xrdp
 
 ## Backlog / unscheduled
 
-- [ ] **Drift-Scan Review — the morning-after quicklook for ezRA recordings
+- [x] **Drift-Scan Review — IMPLEMENTED ON MAIN 2026-09-27 (rollover
+      trigger met; driftscan_review.py + test_driftscan_review.py, 27
+      checks; Observe menu + Help; both ship lists; validated against
+      Haswell 09-24/26, Ray night 8, Rich el92 — awaiting Rick's
+      hands-on before the 1.6.0 cut). Original spec: the morning-after
+      quicklook for ezRA recordings
       (proposed 2026-09-19, from the Ray/Rich/Haswell September arc; Rick:
       write it up). SCHEDULED FOR 1.6.0 (Rick, 2026-09-19): it IS the next
       release's feature, but implementation does not start until the

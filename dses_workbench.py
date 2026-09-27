@@ -3116,6 +3116,28 @@ you (it knows the internal leakage weakens at low frequency and that the
 duplex transmitter holds its timing best at or below 2 MS/s). TX gain is
 always locked at minimum: the internal leakage is all the test needs, so
 even the protected 1420 MHz band is safe.</p>
+
+<h4>Observe menu — Drift-Scan Review</h4>
+<p>The morning-after quicklook for drift-scan recordings: open one or more
+ezRA-format <code>.txt</code> files (written by the Workbench <i>or</i> by
+ezRA's own ezCol — both dialects are read, including ezCol's interleaved
+reference rows and mid-file elevation changes) and get one standard report
+per file. It checks the header (software version, whether the hydrogen
+line is inside the recorded band, the site coordinates against your
+settings, and whether the file's az/el disagrees with the Recording
+panel's current values — the classic stale-header trap), the recording
+itself (row cadence, gaps, total-power stability), and the spectrum
+(narrow spurs against a median bandpass, with the known 1420.000-family
+carriers called out). The plots show a bandpass-flattened waterfall, the
+averaged velocity profile, and the transit light curve with a Gaussian
+fit — peak, width, and the transit center in UT and local sidereal time,
+with the half-integration timestamp correction applied. Load several
+nights at once and the Trend tab plots the fitted peak day by day — the
+pointing/sag monitor used on the Haswell dish. <b>Copy summary</b> puts
+the whole text report on the clipboard; <b>Save report…</b> writes it to
+disk with PNGs of the plots. The review is deliberately the layer
+<i>below</i> ezRA's ezCon/ezSky/ezGal: it answers "did I detect it, and
+is the file clean?" so you know what is worth feeding onward.</p>
 <h4>Observation</h4>
 <p>The "what are you trying to do tonight?" selector. Pick a goal and every
 science-critical setting — band, sample rate, recording format, channels,
@@ -7910,6 +7932,15 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             "cable before telescope time is spent")
         selftest_act.triggered.connect(self._show_selftest_dialog)
         obs_menu.addAction(selftest_act)
+        obs_menu.addSeparator()
+        dsr_act = QtGui.QAction("&Drift-Scan Review…", self)
+        dsr_act.setToolTip(
+            "Open recorded ezRA drift-scan files (Workbench or ezCol) and "
+            "get the standard morning-after report: header sanity, gap and "
+            "spur census, flattened waterfall, velocity profile, and a "
+            "transit fit — plus a peak-vs-day trend across several files")
+        dsr_act.triggered.connect(self._show_driftscan_review)
+        obs_menu.addAction(dsr_act)
 
         rec_menu = bar.addMenu("Recor&ding")
         rec_start_act = QtGui.QAction("&Start Recording", self)
@@ -9424,6 +9455,17 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
     # tear down, restore, then fold with PRESTO and grade against the
     # injected ground truth. Bench-proven 2026-08-05: internal TX->RX
     # leakage suffices — no cable.
+
+    def _show_driftscan_review(self):
+        """Observe menu: the drift-scan quicklook (no radio needed)."""
+        import driftscan_review
+        # Keep the reference on self so the dialog survives exec() scope.
+        self._driftscan_review_dialog = driftscan_review.make_dialog(
+            parent=self,
+            site=self._site_dict(),
+            current_azel=(self._ez_az_deg, self._ez_el_deg),
+            start_dir=self.recording_dir)
+        self._driftscan_review_dialog.exec()
 
     def _show_selftest_dialog(self):
         reason = self._selftest_unavailable_reason()

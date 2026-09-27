@@ -58,6 +58,7 @@ try {
         'pulsar_planner.py',
         'pulsar_sim.py',
         'ezra_txt.py',
+        'driftscan_review.py',
         'fold_analysis.py',
         'fold_pdf.py',
         'iq_to_fil.py',
