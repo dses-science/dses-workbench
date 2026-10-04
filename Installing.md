@@ -69,27 +69,27 @@ Updates to the app afterwards are a small zip replace — Radioconda does not ne
    (ARM and POWER builds — `…-Linux-aarch64.sh`, `…-Linux-ppc64le.sh` — are published too if you're on one of those.)
 2. From a terminal, run the file you downloaded (substitute the real version):
 
-   ``bash
+   ```bash
    bash radioconda-<version>-Linux-x86_64.sh
-   ``
+   ```
 
    Accept the license and let it install to `~/radioconda` (the launcher checks this path automatically).
 3. **USB permissions (B210 / USRP only).** If you have a B210, activate the Ettus udev rules so the device is reachable without root:
 
-   ``bash
+   ```bash
    sudo cp ~/radioconda/lib/uhd/utils/uhd-usrp.rules /etc/udev/rules.d/
    sudo udevadm control --reload-rules && sudo udevadm trigger
-   ``
+   ```
 
    Without this you'll get permission errors when the B210 is plugged in. Then add yourself to the `usrp` (or `plugdev`) group if your distro uses one, and log out/in.
 
    Other USB SDRs (RTL-SDR, HackRF, Airspy, etc.) have their own udev rules, usually installed with the device's own package. SDRPlay uses its API service (see §3A) and needs no udev rules.
 4. (Optional) Confirm your radio is detected, using the command for your device:
 
-   ``bash
+   ```bash
    ~/radioconda/bin/uhd_find_devices      # B210 / USRP
    ~/radioconda/bin/SoapySDRUtil --find   # RTL-SDR, HackRF, Airspy, SDRPlay (after §3A), …
-   ``
+   ```
 
    No radio yet? Skip this — the app starts in playback mode from the bundled sample (see §8).
 
@@ -108,26 +108,26 @@ Radioconda publishes builds for both Mac architectures — pick the one matching
 
 1. From a terminal, run the file you downloaded (substitute the real version + arch):
 
-   ``bash
+   ```bash
    bash radioconda-<version>-MacOSX-<arch>.sh
-   ``
+   ```
 
 2. Accept the default install location (`~/radioconda`).
 3. If you have a radio, plug it in. macOS needs no driver install for the B210.
 4. (Optional) Confirm your radio is detected, using the command for your device:
 
-   ``bash
+   ```bash
    ~/radioconda/bin/uhd_find_devices      # B210 / USRP
    ~/radioconda/bin/SoapySDRUtil --find   # RTL-SDR, HackRF, Airspy, SDRPlay (after §3A), …
-   ``
+   ```
 
    No radio yet? Skip this — the app starts in playback mode from the bundled sample (see §8).
 
 5. **Quarantine note.** If you ever see a Gatekeeper "cannot verify developer" dialog on a Radioconda binary, run:
 
-   ``bash
+   ```bash
    xattr -dr com.apple.quarantine ~/radioconda
-   ``
+   ```
 
 ### 2.4 Add the packages the Workbench needs (all platforms)
 
@@ -139,9 +139,9 @@ Open an **activated Radioconda shell**:
 
 Then run:
 
-``text
+```text
 conda install -c conda-forge pyside6 pyqtgraph scipy
-``
+```
 
 Accept the prompt; conda downloads and installs the three packages. If the launcher later reports "Missing required packages," this is the step that was skipped.
 
@@ -164,9 +164,9 @@ The zip is roughly 60 MB — it includes a short sample recording so the program
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
 
-   ``powershell
+   ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\install-shortcut.ps1
-   ``
+   ```
 
    It prints `Created: …\DSES Radio Astronomy Workbench.lnk`. (Right-clicking the script → "Run with PowerShell" also works *if* your machine's execution policy allows local scripts; if nothing appears, the policy blocked it — use the command above instead.) The shortcut is named **DSES Radio Astronomy Workbench** and launches the app via `launcher.ps1`. It stores the folder's location, so run this step again if you ever rename or move the program folder.
 
@@ -176,30 +176,30 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
 1. Extract the zip somewhere under your home directory where you have write permission — a conventional spot for a per-user app is `~/Applications`. For example:
 
-   ``bash
+   ```bash
    mkdir -p ~/Applications && cd ~/Applications
    unzip ~/Downloads/dses-workbench-1.6.1.zip
    mv dses-workbench-1.6.1 dses-workbench
    cd dses-workbench
    chmod +x launcher.sh
-   ``
+   ```
 
    The `mv` line gives the folder a name without the version. The `dses-workbench/` folder contains `dses_workbench.py`, `launcher.sh`, `dses-workbench.desktop`, `LICENSE`, the `icons/` folder, and this guide. (Avoid system locations like `/opt` unless you extract with `sudo` — keeping it in your home directory avoids permission issues.)
 
 2. Launch:
 
-   ``bash
+   ```bash
    ./launcher.sh
-   ``
+   ```
 
 3. (Optional) Install a desktop entry so the app appears in your application menu:
 
-   ``bash
+   ```bash
    INSTALL_DIR="$(pwd)"
    sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" dses-workbench.desktop \
        > ~/.local/share/applications/dses-workbench.desktop
    update-desktop-database ~/.local/share/applications/ 2>/dev/null || true
-   ``
+   ```
 
    (The `.desktop` file uses `__INSTALL_DIR__` as a placeholder so the launch path is correct on whichever machine installs it. The `sed` line substitutes the current directory into the placeholder.)
 
@@ -207,22 +207,22 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
 The steps are the same as Linux. Extract it into your personal **`~/Applications`** folder (Finder shows it as your own Applications folder, separate from the system `/Applications`):
 
-``bash
+```bash
 mkdir -p ~/Applications && cd ~/Applications
 unzip ~/Downloads/dses-workbench-1.6.1.zip
 mv dses-workbench-1.6.1 dses-workbench
 cd dses-workbench
 chmod +x launcher.sh
 ./launcher.sh
-``
+```
 
 Keeping it under your home directory (rather than the system `/Applications`) avoids permission prompts and Gatekeeper friction.
 
 **(Optional) Create a Desktop icon.** Run **`install-shortcut.command`** to build a double-clickable **DSES Radio Astronomy Workbench.app** on your Desktop, using the app's pulsar icon. Launching it starts the Workbench with no Terminal window. In Finder, right-click `install-shortcut.command` → **Open** (the first run may need Gatekeeper approval — see below), or from a terminal:
 
-``bash
+```bash
 bash install-shortcut.command
-``
+```
 
 It prints `Created: …/Desktop/DSES Radio Astronomy Workbench.app`. Re-run it any time you move the extracted folder (the app remembers the location it was built from). The first time you double-click the new `.app`, macOS may warn about an app from an unidentified developer — right-click it → **Open** once, or approve it under **System Settings → Privacy & Security → Open Anyway**. Startup logs go to `~/Library/Logs/DSES_Workbench.log` if you ever need to troubleshoot a launch.
 
@@ -230,9 +230,9 @@ On Apple Silicon, **make sure** you installed the `arm64` build of Radioconda. M
 
 If the Finder warns about an unidentified developer when running `launcher.sh`, clear the quarantine attribute on the unzipped folder:
 
-``bash
+```bash
 xattr -dr com.apple.quarantine dses-workbench
-``
+```
 
 
 ## 3A. Extra setup for SDRPlay receivers (RSP1A / RSP1B / RSPduo / RSPdx)
@@ -259,39 +259,39 @@ This module is **not** available through `conda install` on any platform, so the
 
 The extracted release folder (from §3) contains `sdrplay\sdrPlaySupport.dll`. Copy it into Radioconda's SoapySDR module directory. That directory is under `C:\ProgramData`, so you need an **Administrator** PowerShell (right-click Windows PowerShell → "Run as administrator"):
 
-``powershell
+```powershell
 Copy-Item ".\sdrplay\sdrPlaySupport.dll" `
   "C:\ProgramData\radioconda\Library\lib\SoapySDR\modules0.8\" -Force
-``
+```
 
 (Run it from the extracted release folder, or give the full path to the DLL.) If your Radioconda is installed somewhere else, adjust the path — the target is always `…\Library\lib\SoapySDR\modules0.8\`.
 
 Then start the SDRplay API service (also from the Administrator PowerShell — the installer leaves it stopped):
 
-``powershell
+```powershell
 Set-Service SDRplayAPIService -StartupType Automatic
 Start-Service SDRplayAPIService
-``
+```
 
 **Linux** — install from your package manager:
 
-``text
+```text
 Debian / Ubuntu:   sudo apt install soapysdr-module-sdrplay
 Fedora:            sudo dnf install SoapySDRPlay
-``
+```
 
 **macOS** — install from the Pothosware Homebrew tap:
 
-``text
+```text
 brew tap pothosware/homebrew-pothos
 brew install soapysdrplay3
-``
+```
 
 Verify it loaded (any OS, from a Radioconda prompt):
 
-``text
+```text
 SoapySDRUtil --info
-``
+```
 
 …should list `sdrplay` in the "Available factories" line. If it doesn't:
 - Re-check that the SDRplay API from §3A.1 installed correctly.
@@ -314,20 +314,20 @@ Regardless of OS, before declaring the install good:
 
 GNU Radio's number-crunching uses **VOLK**, which can profile your CPU once and pick the fastest SIMD kernels (AVX2, NEON, etc.) for the rest of your machine's life. Without the profile, you'll see this warning every time you launch the app:
 
-``text
+```text
 [WARNING] SoapyVOLKConverters: no VOLK config file found.
           Run volk_profile for best performance.
-``
+```
 
 To run it once and silence the warning:
 
-``text
+```text
 Windows: open the "Anaconda Prompt (Radioconda)" shortcut, then:
   volk_profile
 
 Linux / macOS: open a terminal with Radioconda on PATH, then:
   volk_profile
-``
+```
 
 Takes about 30 seconds. Writes the chosen kernels to `%APPDATA%\.volk\volk_config` on Windows or `~/.volk/volk_config` on Linux/macOS. The warning disappears next time you launch the analyzer, and FFT throughput improves on machines with newer SIMD instruction sets.
 
@@ -382,11 +382,11 @@ Window size and position are saved in the same `settings.ini`, in the `[window]`
 
 The settings file is small (~1 KB). Copy it somewhere before a major upgrade if you want a quick rollback path:
 
-``text
+```text
 Windows:  copy "%APPDATA%\DSES_Analyzer\settings.ini" "%USERPROFILE%\Desktop\settings.ini.bak"
 macOS:    cp "~/Library/Application Support/DSES_Analyzer/settings.ini" ~/Desktop/settings.ini.bak
 Linux:    cp ~/.local/share/DSES_Analyzer/settings.ini ~/Desktop/settings.ini.bak
-``
+```
 
 
 ## 6. Troubleshooting
@@ -413,9 +413,9 @@ When you type the path, give the **install root** — the folder that contains `
 
 Radioconda was found, but the app's GUI/plotting packages aren't installed in it. Do the one-time install from §2.4 — open an activated Radioconda shell and run:
 
-``text
+```text
 conda install -c conda-forge pyside6 pyqtgraph scipy
-``
+```
 
 Then launch again.
 
@@ -427,20 +427,20 @@ The OS doesn't see the B210. In order:
 2. Make sure you're using a USB 3 port (not USB 2 — the B210 will be flaky at high sample rates).
 3. From a terminal:
 
-   ``text
+   ```text
    Windows:  C:\ProgramData\radioconda\Library\bin\uhd_find_devices.exe
    Linux:    ~/radioconda/bin/uhd_find_devices
    macOS:    ~/radioconda/bin/uhd_find_devices
-   ``
+   ```
 
    If `uhd_find_devices` doesn't see it either, the problem is below our software — check the B210's LEDs and try a different USB cable.
 4. If `uhd_find_devices` reports a **firmware/image error** rather than "no devices" — e.g. `Could not load firmware`, `ihex_reader::read(): No EOF record found`, or a missing FPGA image — your Radioconda's UHD images are incomplete or corrupt (seen on some macOS installs). Download them once with UHD's own tool, then re-check:
 
-   ``text
+   ```text
    Windows:  C:\ProgramData\radioconda\Library\bin\uhd_images_downloader.exe
    Linux:    ~/radioconda/bin/uhd_images_downloader
    macOS:    ~/radioconda/bin/uhd_images_downloader
-   ``
+   ```
 
    It fetches ~100 MB of firmware/FPGA images into Radioconda (needs internet). After it finishes, `uhd_find_devices` should detect the B210.
 
@@ -464,9 +464,9 @@ The GR flow graph is running but no samples are arriving. Usual causes:
 
 ### macOS: "developer cannot be verified"
 
-``bash
+```bash
 xattr -dr com.apple.quarantine /path/to/dses-workbench
-``
+```
 
 For the optional Desktop **`.app`** icon (built by `install-shortcut.command`), the same warning can appear the first time you double-click it — right-click the app → **Open** once, or approve it in **System Settings → Privacy & Security → Open Anyway**. You only need to do this once per machine.
 

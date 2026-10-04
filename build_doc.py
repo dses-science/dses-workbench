@@ -187,30 +187,39 @@ INLINE_RE = re.compile(
 LINK_RE = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
 
 
-def parse_inline(text: str):
+def parse_inline(text: str, base=None):
+    """Yield (text, style) runs for one line of Markdown.
+
+    Emphasis nests: a `code` span or a [link](url) inside **bold** or
+    *italic* keeps the outer style. Before 4-Oct-2026 the inside of a bold or
+    italic span was emitted verbatim, so **`launcher.bat`** printed its
+    backticks in every guide (81 of them in the 1.6.0 install guide). The
+    token patterns are unchanged, so nothing else renders differently; code
+    spans stay literal (`**x**` prints its asterisks)."""
+    base = dict(base or {})
     pos = 0
     for m in INLINE_RE.finditer(text):
         if m.start() > pos:
-            yield text[pos:m.start()], {}
+            yield text[pos:m.start()], dict(base)
         token = m.group(0)
         if token.startswith('**'):
-            yield token[2:-2], {'bold': True}
+            yield from parse_inline(token[2:-2], {**base, 'bold': True})
         elif token.startswith('`'):
-            yield token[1:-1], {'code': True}
+            yield token[1:-1], {**base, 'code': True}
         elif token.startswith('['):
             lm = LINK_RE.match(token)
             if lm:
                 label, url = lm.group(1), lm.group(2)
                 if label.strip() == url.strip():
-                    yield label, {'code': True}
+                    yield label, {**base, 'code': True}
                 else:
-                    yield label, {}
-                    yield f" ({url})", {'code': True}
+                    yield label, dict(base)
+                    yield f" ({url})", {**base, 'code': True}
         elif token.startswith('*'):
-            yield token[1:-1], {'italic': True}
+            yield from parse_inline(token[1:-1], {**base, 'italic': True})
         pos = m.end()
     if pos < len(text):
-        yield text[pos:], {}
+        yield text[pos:], dict(base)
 
 
 def add_runs(paragraph, text: str):
@@ -381,6 +390,34 @@ def _toc_plain(title):
     table-of-contents entry."""
     t = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', title)   # [text](url) -> text
     return t.replace('**', '').replace('`', '').strip()
+
+
+def _dedent(line, n):
+    """Remove up to n leading spaces: the indent of the fence that opened a
+    code block nested under a list item."""
+    k = 0
+    while k < n and k < len(line) and line[k] == ' ':
+        k += 1
+    return line[k:]
+
+
+def check_fences(text, src_path):
+    """Refuse a source with a damaged code fence.
+
+    A fence needs three backticks. A line of exactly two (with or without a
+    language word) is a fence that lost one, and everything between two such
+    lines renders as run-on inline text with curly quotes and the language
+    word glued on. Every code block of the install guide did, from the 1.1.8
+    cut (3-Aug-2026) until this check was added (4-Oct-2026): nothing in the
+    build complained."""
+    bad = [n for n, ln in enumerate(text.split('\n'), 1)
+           if re.match(r'^\s*``(?!`)\w*\s*$', ln)]
+    if bad:
+        shown = ', '.join(str(n) for n in bad[:12]) + (' ...' if len(bad) > 12 else '')
+        raise SystemExit(
+            f"{src_path}: damaged code fence - a line with two backticks where "
+            f"a fence needs three, at line(s) {shown}. Restore the third "
+            "backtick; nothing was built.")
 
 
 def collect_headings(lines):
@@ -752,6 +789,7 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
                toc: bool = True, toc_mode: str = None):
     toc_mode = toc_mode or TOC_MODE_DEFAULT
     text = src_path.read_text(encoding='utf-8')
+    check_fences(text, src_path)
     text = smartify_quotes(text)
     lines = text.split('\n')
 
@@ -785,6 +823,8 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
     i = 0
     prev_was_table = False          # for post-table paragraph spacing
     pending_widths = None           # from a '<!-- widths: ... -->' comment
+    open_num = None                 # numbered list a later item may continue
+    in_list = False                 # previous block was a list item or its continuation
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
@@ -796,10 +836,13 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
         prev_was_table = False
 
         if stripped.startswith('```'):
+            # A fence indented under a list item: drop that indent from the
+            # code lines, keeping any deeper, relative indentation.
+            pad = len(line) - len(line.lstrip(' '))
             code_lines = []
             i += 1
             while i < len(lines) and not lines[i].strip().startswith('```'):
-                code_lines.append(lines[i])
+                code_lines.append(_dedent(lines[i], pad))
                 i += 1
             i += 1
             add_code_block(doc, code_lines)
@@ -824,14 +867,20 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
             prev_was_table = True
             continue
 
+        # Headings print as plain text: their inline markers (code, bold,
+        # links) are dropped, as the table of contents already did. A heading
+        # also closes any numbered list.
         if stripped.startswith('### '):
-            doc.add_heading(stripped[4:], level=3)
+            doc.add_heading(_toc_plain(stripped[4:]), level=3)
+            open_num, in_list = None, False
             i += 1; continue
         if stripped.startswith('## '):
-            doc.add_heading(stripped[3:], level=2)
+            doc.add_heading(_toc_plain(stripped[3:]), level=2)
+            open_num, in_list = None, False
             i += 1; continue
         if stripped.startswith('# '):
-            add_h1_banner(stripped[2:])
+            add_h1_banner(_toc_plain(stripped[2:]))
+            open_num, in_list = None, False
             i += 1; continue
 
         # Image: a line of the form ![caption](path). The path is resolved
@@ -868,15 +917,25 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
                 while (i < len(lines) and lines[i].startswith('  ')
                        and lines[i].strip() != ''
                        and not re.match(r'^\s*[-*]\s+', lines[i])
-                       and not re.match(r'^\s*\d+\.\s+', lines[i])):
+                       and not re.match(r'^\s*\d+\.\s+', lines[i])
+                       and not lines[i].strip().startswith('```')):
                     content += ' ' + lines[i].strip()
                     i += 1
                 p = doc.add_paragraph(style='List Bullet')
                 add_runs(p, content)
+            in_list = True
             continue
 
         if re.match(r'^\s*\d+\.\s+', line):
-            list_num = new_numbered_list(doc)   # restart at 1 for this list
+            # "1." starts a new list and the numbering restarts. Any other
+            # number continues the list that a code block, a nested bullet
+            # list or an indented paragraph interrupted; without this, step 3
+            # of a procedure printed as "1." (27-Sep to 4-Oct-2026).
+            first_no = int(re.match(r'^\s*(\d+)\.', line).group(1))
+            if first_no == 1 or open_num is None:
+                open_num = new_numbered_list(doc)
+            list_num = open_num
+            in_list = True
             while i < len(lines) and re.match(r'^\s*\d+\.\s+', lines[i]):
                 content = re.sub(r'^\s*\d+\.\s+', '', lines[i])
                 p = doc.add_paragraph(style='List Number')
@@ -889,10 +948,11 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
                     i += 1
                     cont = lines[i].strip()
                     if cont.startswith('```'):
+                        pad = len(lines[i]) - len(lines[i].lstrip(' '))
                         code_lines = []
                         i += 1
                         while i < len(lines) and not lines[i].strip().startswith('```'):
-                            code_lines.append(lines[i].lstrip())
+                            code_lines.append(_dedent(lines[i], pad))
                             i += 1
                         add_code_block(doc, code_lines)
                     elif cont:
@@ -920,6 +980,13 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
         p = doc.add_paragraph()
         if after_table:
             p.paragraph_format.space_before = Pt(6)
+        # A paragraph indented under a list item belongs to that item: keep
+        # it aligned with the item's text. An unindented paragraph ends the
+        # list context (a numbered list may still be continued by number).
+        if in_list and line.startswith('  '):
+            p.paragraph_format.left_indent = Inches(0.5)
+        else:
+            in_list = False
         para_text = ' '.join(s.strip() for s in para_lines)
         add_runs(p, para_text)
         # A lead-in paragraph ("The decisions are:") stays with the list,
