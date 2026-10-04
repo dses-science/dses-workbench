@@ -6,6 +6,25 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## v1.6.1 — SHIPPED 2026-10-04 (cut + published from Windows, release commit 8d44a06, tag v1.6.1; Rick: "Fix the launcher and cut 1.6.1")
+
+Bug-fix release (third digit); the program itself is unchanged from 1.6.0.
+
+- [x] **Windows launcher could not start from a path containing a space**
+      (found 2026-10-04 from Ray's report that his copy would no longer
+      start). `Start-Process -ArgumentList` does not quote, so python got
+      the program path cut at the first space and died in a minimized
+      console nobody could read. launcher.ps1 now quotes arguments with
+      whitespace and reports a program that stops within 10 s with a
+      non-zero exit code (message box with the exit code and the two
+      diagnostic lines). Tests: `test_launcher.py` (fails on 1.6.0).
+- [x] **Linux desktop-entry template quotes Exec** (same class of fault for
+      an install path with a space). Test: `test_desktop_entry.py` (GLib).
+- [x] **Guide**: one permanent folder, not Downloads; the desktop shortcut
+      is "(Recommended)" and the text says the program never creates it by
+      itself; new troubleshooting entry "Windows: nothing happens when I
+      start it". Release_Workflow 4.5: run the launcher test before a cut.
+
 ## v1.6.0 — SHIPPED 2026-09-27 (cut + published from Windows, release commit dc0a936, tag v1.6.0; Rick: "Release 1.6.0 now with what's on main. Ray needs it today.")
 
 Feature release (second digit) per the 1.5.0 rule. Contents since v1.5.3:
@@ -774,6 +793,17 @@ menu bar!) + drift-scan box test (dock behavior on headless Openbox/xrdp
       incoming from Rick that supersedes this priority.
 
 ## Backlog / unscheduled
+
+- [ ] **Startup failures later than the launcher's 10 s window are still
+      silent on Windows** (from the 1.6.1 work, 2026-10-04). The launcher
+      now reports a program that stops within 10 s, but a fault after the
+      heavy imports (damaged settings, a radio-open error on a slow host)
+      can land later, and the console is minimized. App side: an
+      excepthook armed from the first line of dses_workbench.py until the
+      main window is shown — write the traceback to `startup_error.txt`
+      beside settings.ini and show a native message box naming it; disarm
+      once the window is up so exceptions in slots keep today's behaviour.
+      Guide section 6 then points at that file.
 
 - [x] **Drift-Scan Review — IMPLEMENTED ON MAIN 2026-09-27 (rollover
       trigger met; driftscan_review.py + test_driftscan_review.py, 27
