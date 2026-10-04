@@ -1,6 +1,6 @@
 # DSES Radio Astronomy Workbench — Installation Guide
 
-**Version 1.6.0**
+**Version 1.6.1**
 Author: Richard M Hambly (K0GD) — k0gd@cnssys.com
 License: GPL-3.0-or-later
 
@@ -150,17 +150,17 @@ Accept the prompt; conda downloads and installs the three packages. If the launc
 
 Download the application from the distribution site. You can either use the direct links below, or browse the folder <https://gpstime.com/sw_distribution/dses-workbench/> and pick the newest `dses-workbench-*.zip`:
 
-- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.6.0.zip>
+- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.6.1.zip>
 - **This guide (PDF):** <https://gpstime.com/sw_distribution/dses-workbench/DSES_Radio_Astronomy_Workbench_Installation.pdf>
 
 The zip is roughly 60 MB — it includes a short sample recording so the program can run in playback mode when no radio is attached. (Replace `1.4.0` in the link with a newer version number if a later release has been published.)
 
 ### 3.1 Windows 11
 
-1. Extract the zip anywhere you have write permission. A common choice is `Documents\DSES-Workbench`. The extracted folder will be `dses-workbench-1.6.0\` and will contain `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES` or `Documents\DSES-Workbench`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.6.1 fixed that.) The extracted folder will be `dses-workbench-1.6.1\` and will contain `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
-4. (Optional) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
+4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
 
    ``powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\install-shortcut.ps1
@@ -176,12 +176,12 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
    ``bash
    mkdir -p ~/Applications && cd ~/Applications
-   unzip ~/Downloads/dses-workbench-1.6.0.zip
-   cd dses-workbench-1.6.0
+   unzip ~/Downloads/dses-workbench-1.6.1.zip
+   cd dses-workbench-1.6.1
    chmod +x launcher.sh
    ``
 
-   The extracted `dses-workbench-1.6.0/` folder contains `dses_workbench.py`, `launcher.sh`, `dses-workbench.desktop`, `LICENSE`, the `icons/` folder, and this guide. (Avoid system locations like `/opt` unless you extract with `sudo` — keeping it in your home directory avoids permission issues.)
+   The extracted `dses-workbench-1.6.1/` folder contains `dses_workbench.py`, `launcher.sh`, `dses-workbench.desktop`, `LICENSE`, the `icons/` folder, and this guide. (Avoid system locations like `/opt` unless you extract with `sudo` — keeping it in your home directory avoids permission issues.)
 
 2. Launch:
 
@@ -206,8 +206,8 @@ The steps are the same as Linux. Extract it into your personal **`~/Applications
 
 ``bash
 mkdir -p ~/Applications && cd ~/Applications
-unzip ~/Downloads/dses-workbench-1.6.0.zip
-cd dses-workbench-1.6.0
+unzip ~/Downloads/dses-workbench-1.6.1.zip
+cd dses-workbench-1.6.1
 chmod +x launcher.sh
 ./launcher.sh
 ``
@@ -227,7 +227,7 @@ On Apple Silicon, **make sure** you installed the `arm64` build of Radioconda. M
 If the Finder warns about an unidentified developer when running `launcher.sh`, clear the quarantine attribute on the unzipped folder:
 
 ``bash
-xattr -dr com.apple.quarantine dses-workbench-1.6.0
+xattr -dr com.apple.quarantine dses-workbench-1.6.1
 ``
 
 
@@ -357,7 +357,7 @@ Radioconda does **not** need reinstalling for an app update.
 If you'd rather apply it yourself, each release is a self-contained zip:
 
 1. **Close** the running app.
-2. **Extract** the new zip alongside the old one — a new folder named with the version (e.g. `dses-workbench-1.6.0`) — or overwrite the old folder's files.
+2. **Extract** the new zip alongside the old one — a new folder named with the version (e.g. `dses-workbench-1.6.1`) — or overwrite the old folder's files.
 3. **Run** `launcher.bat` (Windows) or `launcher.sh` (macOS/Linux) from the **new** folder.
 
 ### What is preserved across versions
@@ -386,6 +386,14 @@ Linux:    cp ~/.local/share/DSES_Analyzer/settings.ini ~/Desktop/settings.ini.ba
 
 
 ## 6. Troubleshooting
+
+### Windows: nothing happens when I start it
+
+The launcher starts the program in a minimized console window, so a program that stops at once used to leave nothing on the screen. From 1.6.1 the launcher watches the first ten seconds: if the program stops in that time it shows a message with the exit code and the two lines to type to see the reason.
+
+- **Version 1.6.0 or earlier in a folder whose full path contains a space** — a second download that the browser named `dses-workbench-1.6.0 (1)`, a `New folder`, a Windows user name with a space. The launcher handed Python a path cut off at the space, and nothing started. Install 1.6.1 or later, or move the program to a path without spaces.
+- **To see the reason for any failed start**, open a Command Prompt (Start menu, type `cmd`) and run the program by hand from its folder: `cd /d "C:\DSES\dses-workbench-1.6.1"`, then `"C:\ProgramData\radioconda\python.exe" dses_workbench.py` (use your own program folder and Radioconda folder). The message it prints says what is wrong.
+- **Keep the program out of Downloads** (see §3.1). One permanent folder plus the desktop shortcut avoids running an old or half-deleted copy by mistake.
 
 ### "Radioconda not found in standard locations"
 
@@ -453,7 +461,7 @@ The GR flow graph is running but no samples are arriving. Usual causes:
 ### macOS: "developer cannot be verified"
 
 ``bash
-xattr -dr com.apple.quarantine /path/to/dses-workbench-1.6.0
+xattr -dr com.apple.quarantine /path/to/dses-workbench-1.6.1
 ``
 
 For the optional Desktop **`.app`** icon (built by `install-shortcut.command`), the same warning can appear the first time you double-click it — right-click the app → **Open** once, or approve it in **System Settings → Privacy & Security → Open Anyway**. You only need to do this once per machine.

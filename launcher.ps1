@@ -98,7 +98,7 @@ if ($LASTEXITCODE -ne 0) {
 # started at boot, so SDRplay users otherwise have to start it by hand each
 # time. Start it best-effort here. Non-fatal: users of the B210 / RTL-SDR /
 # etc. don't have this service, and a non-elevated shell may lack rights to
-# start it — in which case we print the one-time permanent fix.
+# start it - in which case we print the one-time permanent fix.
 $sdr = Get-Service -DisplayName '*SDRplay*' -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($sdr -and $sdr.Status -ne 'Running') {
     try {
@@ -112,12 +112,53 @@ if ($sdr -and $sdr.Status -ne 'Running') {
     }
 }
 
-$argList = @($MainScript) + $args
+# Start-Process joins -ArgumentList with spaces and does NOT quote, so an
+# argument that contains a space must carry its own quotes. Without this the
+# program could not be started from a folder whose path contained a space:
+# python received the path cut off at the first space, failed, and its
+# minimized console closed before anyone could read it (1.6.0 and earlier).
+$argList = @(@($MainScript) + $args | ForEach-Object {
+    $a = [string]$_
+    if ($a -match '\s' -and $a -notmatch '^".*"$') { '"{0}"' -f $a } else { $a }
+})
 # Start the console minimized so it doesn't clutter the desktop. The Qt window
 # is what the user interacts with, and it un-minimizes itself on launch (see
-# _bring_to_front) — Qt's first window would otherwise inherit this minimized
+# _bring_to_front) - Qt's first window would otherwise inherit this minimized
 # show-state, so only the console stays minimized. We use python.exe (not
 # pythonw.exe) on purpose: the app's overflow monitor redirects FD 2 (stderr),
 # which needs a real console allocated; a minimized console keeps FD 2 valid
 # and the logs reachable from the taskbar, whereas pythonw.exe has no console.
-Start-Process -FilePath $python -ArgumentList $argList -WorkingDirectory $ScriptDir -WindowStyle Minimized
+$proc = Start-Process -FilePath $python -ArgumentList $argList -WorkingDirectory $ScriptDir -WindowStyle Minimized -PassThru
+
+# A program that stops at once (damaged install, missing file, a fault during
+# startup) used to fail silently: its minimized console closes before anyone
+# can read it. Watch the first seconds and say so instead. A normal start, a
+# cancelled startup dialog and a normal quit all end with exit code 0.
+try { $null = $proc.Handle } catch {}   # keep the handle so ExitCode stays readable
+Write-Host 'Starting the DSES Radio Astronomy Workbench - this window closes by itself.'
+if ($proc.WaitForExit(10000)) {
+    $code = $proc.ExitCode
+    if ($null -ne $code -and $code -ne 0) {
+        $msg = @(
+            ('The DSES Radio Astronomy Workbench stopped right after it started (exit code {0}).' -f $code),
+            '',
+            'Try starting it once more. If it stops again, open a Command Prompt (Start menu, type cmd) and enter these two lines to see the reason:',
+            '',
+            ('    cd /d "{0}"' -f $ScriptDir),
+            ('    "{0}" dses_workbench.py' -f $python),
+            '',
+            'The message it prints says what is wrong. See section 6 of the installation guide.'
+        ) -join "`r`n"
+        Write-Host $msg -ForegroundColor Red
+        try {
+            Add-Type -AssemblyName System.Windows.Forms
+            # An invisible top-most owner keeps the box above other windows,
+            # also when this launcher itself runs hidden (the desktop icon).
+            $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }
+            [void][System.Windows.Forms.MessageBox]::Show($owner, $msg,
+                'DSES Radio Astronomy Workbench', 'OK', 'Warning')
+            $owner.Dispose()
+        } catch {}
+        exit 1
+    }
+}

@@ -141,6 +141,8 @@ Unix:     ./make-release.sh
 
 The script reads `APP_VERSION`, creates `dist\dses-workbench-<version>\` with the runtime files, and zips it to `dist\dses-workbench-<version>.zip`. The staging directory is kept so you can inspect the contents before publishing.
 
+**Launcher check (Windows cuts).** Before publishing, run `.conda\python.exe test_launcher.py`. It starts the launcher from a folder whose name contains spaces, with stand-in programs, and fails if the program does not receive its full path or if a program that stops at once is not reported. Through 1.6.0 the launcher could not start from a path with a space; this test exists so that cannot return. On Linux, or from Windows through WSL, `python3 test_desktop_entry.py` checks the desktop-entry template the same way.
+
 ### 4.6 Upload to the server
 
 Upload **into the directory** `/var/www/html/sw_distribution/dses-workbench/` on gpstime.com. Two files go up each release:
