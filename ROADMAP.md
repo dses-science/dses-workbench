@@ -24,6 +24,16 @@ Bug-fix release (third digit); the program itself is unchanged from 1.6.0.
       is "(Recommended)" and the text says the program never creates it by
       itself; new troubleshooting entry "Windows: nothing happens when I
       start it". Release_Workflow 4.5: run the launcher test before a cut.
+- [x] **Guide command blocks restored; zip replaced in place** (same
+      evening). Every code fence in Installing.md had lost a backtick at
+      the 1.1.8 cut, so each command block printed as run-on inline text
+      from 1.1.8 through the first 1.6.1 zip. Fences restored; build_doc.py
+      refuses a damaged fence, nests emphasis, keeps list numbering across
+      code blocks (`test_build_doc.py`, 27 checks). The folder convention
+      also changed: extract, rename the folder to `DSES_Workbench`, then
+      make the icon. The 1.6.1 zip was rebuilt with the corrected guide —
+      35 of 36 files identical, only the bundled PDF differs — and replaced
+      on the server (sha256 `d58f43ac…`); tag v1.6.1 unchanged.
 
 ## v1.6.0 — SHIPPED 2026-09-27 (cut + published from Windows, release commit dc0a936, tag v1.6.0; Rick: "Release 1.6.0 now with what's on main. Ray needs it today.")
 
