@@ -1234,12 +1234,52 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path,
     killed = []
     aborted = None
     completed = False
+    # A hung Distiller or a stuck AcroTray blocks the Adobe PDF driver, and
+    # then PrintOut never returns (8-Oct-2026): clear both before printing.
+    kill_stale_distillers("before printing")
+    kill_acrotray("before printing")
+
+    # PrintOut(Background=True) is supposed to return at once, but when the
+    # driver is blocked it does not return at all, so the watchdog below is
+    # a thread: if no PostScript has appeared `stall_grace` seconds after
+    # the call it kills AcroTray (the proven remedy) and any hung Distiller,
+    # and says so; the main loop's own clock starts only when PrintOut
+    # returns, so a remedied stall is not then mistaken for a timeout.
+    import threading
+    stall_grace = 30.0
+    returned = threading.Event()
+    stop_watch = threading.Event()
+    watch_notes = []
+
+    def _watchdog():
+        t_call = time.time()
+        remedied = False
+        while not stop_watch.wait(1.0):
+            if ps_file.is_file() and ps_file.stat().st_size > 0:
+                return
+            if not remedied and time.time() - t_call > stall_grace:
+                remedied = True
+                k = kill_acrotray("after %.0f s with no PostScript (driver stalled)"
+                                  % (time.time() - t_call))
+                k += kill_stale_distillers("after the stall")
+                watch_notes.append("stall remedy at %.0f s: killed pids %s"
+                                   % (time.time() - t_call, k or "none"))
+    watch = threading.Thread(target=_watchdog, daemon=True,
+                             name="adobe-pdf-stall-watchdog")
     try:
         word.ActivePrinter = "Adobe PDF"
+        watch.start()
         doc.PrintOut(Background=True, PrintToFile=True,
                      OutputFileName=str(ps_file))
+        returned.set()
+        t_ret = time.time()
+        if t_ret - t0 > 5:
+            print("build_doc: PrintOut blocked for %.0f s before returning%s"
+                  % (t_ret - t0, ("; " + "; ".join(watch_notes)) if watch_notes else ""),
+                  file=sys.stderr)
         last, stable = -1, 0
-        deadline = t0 + ps_timeout
+        deadline = t_ret + ps_timeout
+        last_growth = t_ret
         abort_by = None
         while True:
             size = ps_file.stat().st_size if ps_file.is_file() else -1
@@ -1248,17 +1288,26 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path,
                 stable += 1
             else:
                 stable = 0
+                if size > 0:
+                    last_growth = time.time()
             if size > 0 and stable >= 2 and not busy and abort_by is None:
                 completed = True
                 break
             now = time.time()
             helper_age = max([a for a, _ in _acrobat_helpers_since(t0)] or [0.0])
-            if abort_by is None and (now > deadline or
+            # Abort only when nothing is being written: no PostScript past
+            # the deadline, a growing file that stopped growing for 60 s,
+            # or a crashed font-capture helper with no PostScript.
+            stalled = (size <= 0 and now > deadline) or \
+                      (size > 0 and now - last_growth > 60.0 and busy)
+            if abort_by is None and (stalled or
                                      (size <= 0 and helper_age > helper_grace)):
                 aborted = ("Acrobat.exe font-capture helper alive %.0f s with "
                            "no PostScript" % helper_age
-                           if helper_age > helper_grace else
-                           "no PostScript within %.0f s" % ps_timeout)
+                           if (size <= 0 and helper_age > helper_grace) else
+                           "no PostScript within %.0f s of PrintOut returning"
+                           % ps_timeout if size <= 0 else
+                           "PostScript stopped growing at %d bytes" % size)
                 killed = _kill_acrobat_helpers(t0)
                 _cancel_print_jobs("Adobe PDF")
                 abort_by = now + 20.0
@@ -1267,6 +1316,7 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path,
             last = size
             time.sleep(1.0)
     finally:
+        stop_watch.set()
         try:
             word.ActivePrinter = previous_printer
         except Exception:
@@ -1278,18 +1328,305 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path,
         shutil.rmtree(scratch_dir, ignore_errors=True)
         raise RuntimeError(f"Word wrote no usable PostScript ({detail})")
 
-    r = subprocess.run([str(acrodist), "/N", "/Q", str(ps_file)],
-                       capture_output=True, text=True, timeout=300)
-    if not out_pdf.is_file() or out_pdf.stat().st_size == 0:
-        log = ps_file.with_suffix(".log")
-        detail = log.read_text(errors="replace")[-2000:] if log.is_file() else r.stderr
-        raise RuntimeError(f"Distiller produced no PDF from {ps_file}: {detail}")
+    run_distiller(acrodist, ps_file, out_pdf)
 
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
     if pdf_path.exists():
         pdf_path.unlink()
     shutil.copy2(str(out_pdf), str(pdf_path))
     shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Distiller runner and cross-session serialization (8-Oct-2026)
+#
+# Two things went wrong on 7 and 8 October 2026 and both are fixed here.
+#
+# 1. acrodist.exe /N /Q writes the complete PDF in about a second and then,
+#    some of the time, hangs on exit ("Acrobat Distiller (Not Responding)",
+#    End of Job in its log pane). The old subprocess.run(..., timeout=300)
+#    waited on the process, not the PDF: five minutes of nothing, then a
+#    TimeoutExpired that sent a perfectly good build to the msprint fallback
+#    (fonts embedded whole, bigger files) — which Rick does not want. And a
+#    Distiller left hanging blocks the Adobe PDF driver for every later
+#    print on the machine, so Word's PrintOut then produces no PostScript at
+#    all (the 7-Oct stalls: ~20 empty dses_distill_* folders in %TEMP%).
+#    run_distiller() therefore watches the OUTPUT (the PDF exists, has
+#    stopped growing, ends in %%EOF and parses), and once it is complete it
+#    kills a Distiller that has not quit by itself. Hung or leftover
+#    Distillers are killed before every print.
+#
+# 2. Two build_doc.py builds in two Claude sessions at the same time killed
+#    each other's invisible Word ("The RPC server is unavailable"), because
+#    _kill_stale_invisible_word() cannot tell an orphan from another
+#    session's live build. build_lock is a machine-wide named mutex held
+#    for the whole Word + print step: a second build WAITS (saying so on
+#    stderr) instead of colliding; a build that dies releases it (the OS
+#    marks the mutex abandoned and the next waiter gets it). Under the lock,
+#    any invisible Word or Distiller that is still alive IS an orphan, so
+#    the kills become safe. pptx_to_pdf.py (the deck route) uses both.
+# ---------------------------------------------------------------------------
+
+BUILD_MUTEX_NAME = r"Global\DSES_build_doc_word_pdf"
+
+
+class build_lock:
+    """Context manager: one Word + PDF-printer build at a time on this
+    machine, across processes and Claude sessions (a named Windows mutex;
+    a no-op elsewhere). Waits up to `wait_s` for another build to finish,
+    reporting the wait on stderr; a crashed holder releases it (abandoned
+    mutex = acquired)."""
+
+    def __init__(self, what="build", wait_s=1800.0):
+        self.what = what
+        self.wait_s = wait_s
+        self._h = None
+        self.held = False
+
+    def __enter__(self):
+        if sys.platform != "win32":
+            return self
+        import time
+        import win32event
+        self._h = win32event.CreateMutex(None, False, BUILD_MUTEX_NAME)
+        t0 = time.time()
+        said = False
+        while True:
+            rc = win32event.WaitForSingleObject(self._h, 5000)
+            if rc in (win32event.WAIT_OBJECT_0, win32event.WAIT_ABANDONED):
+                break
+            if rc != win32event.WAIT_TIMEOUT:
+                raise RuntimeError(f"build lock wait failed (code {rc})")
+            if not said:
+                print(f"build_doc: another Word/PDF build holds the machine "
+                      f"lock; waiting for it before {self.what} "
+                      f"(up to {self.wait_s / 60:.0f} min)", file=sys.stderr)
+                said = True
+            if time.time() - t0 > self.wait_s:
+                raise RuntimeError("gave up waiting for the other Word/PDF "
+                                   f"build after {self.wait_s / 60:.0f} min")
+        if said:
+            print(f"build_doc: lock acquired after {time.time() - t0:.0f} s",
+                  file=sys.stderr)
+        self.held = True
+        return self
+
+    def __exit__(self, *exc):
+        if self._h is not None:
+            import win32event
+            import win32api
+            if self.held:
+                try:
+                    win32event.ReleaseMutex(self._h)
+                except Exception:
+                    pass
+            try:
+                win32api.CloseHandle(self._h)
+            except Exception:
+                pass
+            self._h = None
+            self.held = False
+        return False
+
+
+def _hung_windows_of(pid):
+    """True if the process owns a top-level window Windows reports as not
+    responding (what the title bar shows as '(Not Responding)')."""
+    try:
+        import win32gui
+        import win32process
+    except ImportError:
+        return False
+    hung = []
+
+    def _cb(hwnd, acc):
+        try:
+            if win32process.GetWindowThreadProcessId(hwnd)[1] == pid \
+                    and win32gui.IsHungAppWindow(hwnd):
+                acc.append(hwnd)
+        except Exception:
+            pass
+    try:
+        win32gui.EnumWindows(_cb, hung)
+    except Exception:
+        pass
+    return bool(hung)
+
+
+def kill_stale_distillers(when="before printing"):
+    """Kill acrodist.exe processes that are ours (command line names a
+    dses_distill_ scratch file) or that are not responding, and report each
+    on stderr. A Distiller Rick opened himself and that is answering is left
+    alone. Returns the pids killed."""
+    try:
+        import psutil
+    except ImportError:
+        return []
+    killed = []
+    for p in psutil.process_iter(['name', 'pid', 'cmdline', 'create_time']):
+        if (p.info.get('name') or '').lower() != 'acrodist.exe':
+            continue
+        cmd = " ".join(p.info.get('cmdline') or [])
+        ours = "dses_distill_" in cmd
+        hung = _hung_windows_of(p.info['pid'])
+        if not (ours or hung):
+            continue
+        try:
+            p.kill()
+            p.wait(timeout=10)
+            killed.append(p.info['pid'])
+            print(f"build_doc: killed a leftover Distiller (pid {p.info['pid']}, "
+                  f"{'ours' if ours else 'not responding'}) {when}",
+                  file=sys.stderr)
+        except Exception:
+            pass
+    return killed
+
+
+def kill_acrotray(when="before printing"):
+    """Kill Acrobat's tray helper, AcroTray.exe. The Adobe PDF printer
+    driver hands every job through it, and one whose Distiller child was
+    killed (the hang-on-exit case) sits there answering but never passing
+    the next job on: Word's PrintOut then blocks with no PostScript for as
+    long as you care to wait (7-Oct and 8-Oct-2026; proven on 8-Oct by
+    killing it mid-stall — PostScript appeared five seconds later). The
+    driver relaunches a fresh one on the next print, so killing it costs
+    nothing. Returns the pids killed."""
+    try:
+        import psutil
+    except ImportError:
+        return []
+    killed = []
+    for p in psutil.process_iter(['name', 'pid']):
+        if (p.info.get('name') or '').lower() != 'acrotray.exe':
+            continue
+        try:
+            p.kill()
+            p.wait(timeout=10)
+            killed.append(p.info['pid'])
+            print(f"build_doc: killed AcroTray.exe (pid {p.info['pid']}) {when}",
+                  file=sys.stderr)
+        except Exception:
+            pass
+    return killed
+
+
+def _pdf_complete(path: Path) -> bool:
+    """True once the file ends in a %%EOF trailer and parses with at least
+    one page (pypdf when available; the trailer check alone otherwise)."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, path.stat().st_size - 1024))
+            tail = fh.read()
+    except OSError:
+        return False
+    if b"%%EOF" not in tail:
+        return False
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return True
+    try:
+        return len(PdfReader(str(path)).pages) >= 1
+    except Exception:
+        return False
+
+
+def run_distiller(acrodist, ps_file: Path, out_pdf: Path,
+                  timeout=300.0, exit_grace=5.0):
+    """Distill `ps_file` to `out_pdf` (Distiller writes it beside the .ps)
+    and return when the PDF is complete, whether or not acrodist.exe has
+    quit. Completion = the PDF exists, has stopped growing, ends in %%EOF
+    and parses. A Distiller that is still alive `exit_grace` seconds after
+    that is killed (the 8-Oct-2026 hang-on-exit); one that writes no
+    complete PDF within `timeout` is killed and a RuntimeError raised with
+    the tail of its log. Never waits on process exit, never captures its
+    pipes (a hung GUI process would hold them open)."""
+    import subprocess
+    import time
+
+    kill_stale_distillers("before distilling")
+    log = ps_file.with_suffix(".log")
+    for stale in (out_pdf, log):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+    p = subprocess.Popen([str(acrodist), "/N", "/Q", str(ps_file)],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    t0 = time.time()
+    last, stable, complete = -1, 0, False
+    while time.time() - t0 < timeout:
+        rc = p.poll()
+        size = out_pdf.stat().st_size if out_pdf.is_file() else -1
+        stable = stable + 1 if (size > 0 and size == last) else 0
+        last = size
+        if size > 0 and (stable >= 2 or rc is not None) and _pdf_complete(out_pdf):
+            complete = True
+            break
+        if rc is not None and size <= 0:
+            break                       # exited without writing anything
+        time.sleep(0.5)
+    if p.poll() is None:
+        if complete:
+            try:
+                p.wait(timeout=exit_grace)
+            except subprocess.TimeoutExpired:
+                pass
+        if p.poll() is None:
+            p.kill()
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            print("build_doc: Distiller (pid %d) %s; killed it" % (
+                p.pid,
+                "hung on exit after writing the PDF in %.0f s" % (time.time() - t0)
+                if complete else
+                "wrote no complete PDF within %.0f s" % timeout), file=sys.stderr)
+    if not complete:
+        detail = log.read_text(errors="replace")[-2000:] if log.is_file() else "(no log)"
+        raise RuntimeError(f"Distiller produced no PDF from {ps_file}: {detail}")
+    return out_pdf
+
+
+def _cleanup_scratch(max_age_s=86400.0):
+    """Remove dses_distill_* scratch folders left in %TEMP% by earlier runs:
+    empty ones, and any older than a day."""
+    import shutil
+    import time
+    now = time.time()
+    try:
+        for d in Path(tempfile.gettempdir()).glob("dses_distill_*"):
+            try:
+                if not d.is_dir():
+                    continue
+                if not any(d.iterdir()) or now - d.stat().st_mtime > max_age_s:
+                    shutil.rmtree(d, ignore_errors=True)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def _remove_stale_owner_file(docx_path: Path):
+    """Delete Word's '~$name.docx' owner file if one is left beside the
+    document and no Word is running (a build killed mid-print leaves it,
+    and Word then opens the document read-only without saying so)."""
+    owner = docx_path.with_name("~$" + docx_path.name[2:])
+    if not owner.exists():
+        return
+    try:
+        import psutil
+        if any((p.info.get('name') or '').lower() == 'winword.exe'
+               for p in psutil.process_iter(['name'])):
+            return
+        owner.unlink()
+        print(f"build_doc: removed stale Word owner file {owner.name}",
+              file=sys.stderr)
+    except Exception:
+        pass
 
 
 def _print_to_ms_pdf(word, doc, pdf_path: Path):
@@ -1478,10 +1815,32 @@ class _DialogSentinel:
                 win32gui.SendMessage(b, win32con.BM_CLICK, 0, 0)
             return bool(buttons)
 
+        # A dialog owned by our Word that is NOT a known print prompt (for
+        # example the Adobe driver's 'Create Adobe PDF' box seen 8-Oct-2026
+        # during a stalled print) is given `grace` seconds on screen before
+        # it is closed, in case it is a progress window of a job that is
+        # still working; the known prompts and the Font Capture crash box
+        # are closed at once.
+        grace = 90.0
+        first_seen = {}
         while not self._stop.is_set():
             found = []
             try:
                 win32gui.EnumWindows(scan, found)
+                now = __import__("time").time()
+                keep = []
+                for hwnd, title in found:
+                    known = title in self.CANCEL or title.startswith("Font Capture")
+                    if not known:
+                        first_seen.setdefault(hwnd, now)
+                        if now - first_seen[hwnd] < grace:
+                            if first_seen[hwnd] == now:
+                                print(f"build_doc: dialog {title!r} is on screen; "
+                                      f"closing it if still there in {grace:.0f} s",
+                                      file=sys.stderr)
+                            continue
+                    keep.append((hwnd, title))
+                found = keep
                 for hwnd, title in found:
                     if title.startswith("Font Capture"):
                         what = "pressed OK on" if press_ok(hwnd) else "closed"
@@ -1561,10 +1920,21 @@ def _convert_docx_to_pdf_word(docx_path: Path, pdf_path: Path):
     used: it rasterizes the OpenType-PS house faces (tested 19-Aug-2026 and
     18-Sep-2026 — image-only pages, no text layer). A dialog sentinel runs
     during the print step so a modal print box cannot park the build on a
-    human. Kills orphaned invisible winword.exe processes first (a Word with
-    a visible window is left alone)."""
+    human. Runs under build_lock (one Word/PDF build at a time on the
+    machine, so another session's build waits instead of colliding), and
+    under that lock kills orphaned invisible winword.exe processes and
+    leftover Distillers first (a Word with a visible window is left alone)."""
+    with build_lock(f"the PDF of {docx_path.name}"):
+        return _convert_docx_to_pdf_word_locked(docx_path, pdf_path)
+
+
+def _convert_docx_to_pdf_word_locked(docx_path: Path, pdf_path: Path):
     import time
+    _cleanup_scratch()
+    kill_stale_distillers("at build start")
+    kill_acrotray("at build start")
     _kill_stale_invisible_word()
+    _remove_stale_owner_file(docx_path)
     engine = _pdf_engine()
     t_start = time.time()
     word = _word_app()
