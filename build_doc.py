@@ -795,6 +795,12 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
 
     doc = Document()
     configure_section(doc.sections[0])
+    if not cover:
+        # No cover page: the running header (title, subtitle, logo) and the
+        # footer belong on page 1 as well, or the paper starts with no
+        # identification at all (Rick, 11-Oct-2026, on the EVE-26 Board
+        # report). The blank first-page header exists only for a cover.
+        doc.sections[0].different_first_page_header_footer = False
     apply_heading_styles(doc)
     if cover:
         add_cover_page(doc)
@@ -894,7 +900,13 @@ def md_to_docx(src_path: Path, dst_path: Path, cover: bool = True,
             if img_path.is_file():
                 p = doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.add_run().add_picture(str(img_path), width=Inches(6.2))
+                # A '<!-- widths: W -->' hint on the line before an image sets
+                # its width in inches (default 6.2, the text column); a tall
+                # portrait photograph at full width pushes its caption onto
+                # the next page (Rick, 11-Oct-2026, EVE-26 Board report).
+                img_w = pending_widths[0] if pending_widths else 6.2
+                pending_widths = None
+                p.add_run().add_picture(str(img_path), width=Inches(img_w))
                 if caption:
                     cp = doc.add_paragraph()
                     cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1331,10 +1343,36 @@ def _print_to_adobe_pdf(word, doc, docx_path: Path, pdf_path: Path,
     run_distiller(acrodist, ps_file, out_pdf)
 
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    if pdf_path.exists():
-        pdf_path.unlink()
-    shutil.copy2(str(out_pdf), str(pdf_path))
+    _replace_pdf(out_pdf, pdf_path)
     shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+class TargetLocked(RuntimeError):
+    """The output PDF is open in another program; not an engine failure,
+    so the caller must not fall back to another printer."""
+
+
+def _replace_pdf(src: Path, dst: Path, wait_s=15.0):
+    """Copy the finished PDF over the target, waiting up to `wait_s` for a
+    viewer that has it open (Acrobat, the app's file pane) to let go. If it
+    does not, raise TargetLocked naming the file (16-Oct-2026: a locked
+    target made a good Distiller build look like a Distiller failure and the
+    fallback printer then failed on the same lock)."""
+    import shutil
+    import time
+    t0 = time.time()
+    while True:
+        try:
+            if dst.exists():
+                dst.unlink()
+            shutil.copy2(str(src), str(dst))
+            return
+        except PermissionError as exc:
+            if time.time() - t0 > wait_s:
+                raise TargetLocked(
+                    f"{dst} is open in another program and cannot be replaced "
+                    f"({exc}); close it and rebuild") from exc
+            time.sleep(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1547,27 +1585,42 @@ def run_distiller(acrodist, ps_file: Path, out_pdf: Path,
 
     kill_stale_distillers("before distilling")
     log = ps_file.with_suffix(".log")
-    for stale in (out_pdf, log):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
-    p = subprocess.Popen([str(acrodist), "/N", "/Q", str(ps_file)],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL)
-    t0 = time.time()
-    last, stable, complete = -1, 0, False
-    while time.time() - t0 < timeout:
-        rc = p.poll()
-        size = out_pdf.stat().st_size if out_pdf.is_file() else -1
-        stable = stable + 1 if (size > 0 and size == last) else 0
-        last = size
-        if size > 0 and (stable >= 2 or rc is not None) and _pdf_complete(out_pdf):
-            complete = True
+    # Seen 9 and 11 Oct 2026: acrodist.exe occasionally exits with code 0
+    # after about two seconds having written neither a log nor a PDF (a
+    # refused start, presumably while the previous instance's state is
+    # still being torn down); the next launch a few seconds later works.
+    # So a silent exit with no output is retried, twice, before it counts.
+    for attempt in (1, 2, 3):
+        for stale in (out_pdf, log):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+        p = subprocess.Popen([str(acrodist), "/N", "/Q", str(ps_file)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        t0 = time.time()
+        last, stable, complete = -1, 0, False
+        while time.time() - t0 < timeout:
+            rc = p.poll()
+            size = out_pdf.stat().st_size if out_pdf.is_file() else -1
+            stable = stable + 1 if (size > 0 and size == last) else 0
+            last = size
+            if size > 0 and (stable >= 2 or rc is not None) and _pdf_complete(out_pdf):
+                complete = True
+                break
+            if rc is not None and size <= 0:
+                break                   # exited without writing anything
+            time.sleep(0.5)
+        silent_exit = (p.poll() is not None and not complete
+                       and not log.is_file() and not out_pdf.is_file())
+        if not silent_exit or attempt == 3:
             break
-        if rc is not None and size <= 0:
-            break                       # exited without writing anything
-        time.sleep(0.5)
+        print("build_doc: Distiller exited silently (code %s after %.0f s, no log, "
+              "no PDF); retrying in 3 s (attempt %d of 3)"
+              % (p.returncode, time.time() - t0, attempt + 1), file=sys.stderr)
+        time.sleep(3.0)
+        kill_acrotray("before the Distiller retry")
     if p.poll() is None:
         if complete:
             try:
@@ -1587,7 +1640,9 @@ def run_distiller(acrodist, ps_file: Path, out_pdf: Path,
                 "wrote no complete PDF within %.0f s" % timeout), file=sys.stderr)
     if not complete:
         detail = log.read_text(errors="replace")[-2000:] if log.is_file() else "(no log)"
-        raise RuntimeError(f"Distiller produced no PDF from {ps_file}: {detail}")
+        raise RuntimeError(f"Distiller produced no PDF from {ps_file} (exit code "
+                           f"{p.returncode}, {time.time() - t0:.0f} s, PS "
+                           f"{ps_file.stat().st_size if ps_file.is_file() else 0} bytes): {detail}")
     return out_pdf
 
 
@@ -1981,6 +2036,8 @@ def _convert_docx_to_pdf_word_locked(docx_path: Path, pdf_path: Path):
                                            "'Adobe PDF' printer is not installed")
                     try:
                         _print_to_adobe_pdf(word, doc, docx_path, pdf_path)
+                    except TargetLocked:
+                        raise           # the PDF is open elsewhere; no fallback helps
                     except Exception as exc:
                         print("NOTE: the Distiller route failed "
                               f"({type(exc).__name__}: {exc}).\n"
