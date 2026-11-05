@@ -43,6 +43,12 @@ for _name in ("information", "question", "warning", "critical"):
 # (a QMessageBox instance + exec, which would block headless): answer Ok.
 A._front_messagebox = lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Ok
 LIVE = "--live" in sys.argv      # use the one attached radio instead of playback
+# --driver <name>: with several radios attached, use only that SoapySDR/UHD
+# driver (e.g. airspy, sdrplay, uhd) — the startup picker is a modal dialog.
+if "--driver" in sys.argv:
+    _drv = sys.argv[sys.argv.index("--driver") + 1]
+    _all = A.find_all_radios
+    A.find_all_radios = lambda: [d for d in _all() if d["driver"] == _drv]
 if not LIVE:
     # No radio: force playback of the bundled sample.
     A.find_all_radios = lambda: []

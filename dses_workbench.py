@@ -4229,10 +4229,43 @@ OBSERVATION_PRESETS = [
 OBS_MANUAL_IDX = len(OBSERVATION_PRESETS) - 1
 
 
+def _soapy_probe_rates(dev_args):
+    """Ask the SoapySDR device itself which sample rates it supports (RX
+    channel 0), opening and closing it before gr-soapy opens it for real.
+    Returns a sorted list, or [] when the module is missing, the device
+    cannot be opened, or the driver reports ranges instead of a list (the
+    static SOAPY_DEFAULTS table is the fallback). Why (2026-11-04, Tom
+    Hagen NE9Y): the 'airspy' table entry carries the Airspy R2's 2.5 and
+    10 MS/s, but his Airspy MINI only does 3 and 6 MS/s — he had to edit
+    the source to run at all. One family, two rate sets; the device knows."""
+    try:
+        import SoapySDR
+        from SoapySDR import SOAPY_SDR_RX
+    except Exception:
+        return []
+    dev = None
+    try:
+        dev = SoapySDR.Device(dev_args)
+        rates = [float(r) for r in dev.listSampleRates(SOAPY_SDR_RX, 0)]
+    except Exception as exc:
+        print(f"SoapySDR rate probe skipped ({dev_args}): {exc}", file=sys.stderr)
+        rates = []
+    finally:
+        try:
+            del dev                     # the wrapper's destructor unmakes it
+        except Exception:
+            pass
+        gc.collect()
+    rates = sorted(set(r for r in rates if r > 0))
+    return rates
+
+
 class SoapyGenericSource(RadioSource):
     """Wraps gr-soapy's source block for any SoapySDR-recognised radio.
-    Sample rate options and gain range come from SOAPY_DEFAULTS when the
-    driver is known; otherwise we leave the defaults from the base class.
+    Sample rate options come from the device itself when it lists them
+    (1.7, see _soapy_probe_rates), else from SOAPY_DEFAULTS when the
+    driver is known; the gain range comes from the table (some drivers'
+    reported ranges are gain REDUCTION and need the table's mapping).
     The constructor signature mirrors UhdB200Source so the dispatch site
     in dses_workbench.__init__ stays uniform."""
 
@@ -4255,6 +4288,10 @@ class SoapyGenericSource(RadioSource):
         dev_args = f"driver={driver}"
         if serial:
             dev_args += f",serial={serial}"
+        # The device's own rate list beats the table (Airspy Mini vs R2).
+        probed = _soapy_probe_rates(dev_args)
+        if probed:
+            self.samp_rate_options = probed
         # gr-soapy source signature is positional:
         #   soapy.source(device, type, nchan, dev_args='', stream_args='',
         #                tune_args=[''], other_settings=[''])
@@ -9020,13 +9057,30 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         src = getattr(self, '_source', None)
         if src is None or self._playback_mode or src.lo_offset_supported():
             return cfg, None
-        try:
-            _, rmax = src.samp_rate_range()
-        except Exception:
-            rmax = 0.0
-        if rmax < float(alt.get('min_rate', alt['rate'])):
-            return cfg, None            # RTL-SDR class: line-centered stands
-        rate = min(float(alt['rate']), float(rmax))
+        min_rate = float(alt.get('min_rate', alt['rate']))
+        want = float(alt['rate'])
+        # Radios with a DISCRETE rate list (Airspy R2: 2.5/10, Airspy Mini:
+        # 3/6, HackRF: 2/4/8/...) must get a rate they actually support —
+        # asking for 8 MS/s and letting the driver round DOWN to 2.5 would
+        # put the line outside the band (found 2026-11-05 on the Airspy R2
+        # in the lab, via Tom Hagen's Airspy Mini report). Take the preset
+        # rate when the radio has it, else the smallest supported rate that
+        # still clears min_rate; a radio with no rate >= min_rate keeps the
+        # line-centred preset (RTL-SDR class).
+        opts = [float(r) for r in (getattr(src, 'samp_rate_options', None) or [])]
+        if opts:
+            eligible = [r for r in opts if r >= min_rate]
+            if not eligible:
+                return cfg, None
+            rate = want if want in opts else min(eligible)
+        else:
+            try:
+                _, rmax = src.samp_rate_range()
+            except Exception:
+                rmax = 0.0
+            if rmax < min_rate:
+                return cfg, None        # RTL-SDR class: line-centered stands
+            rate = min(want, float(rmax))
         out = dict(cfg, manual=float(alt['manual']), rate=rate, lo_off=0.0)
         note = (f"HI preset adapted for {src.display_label}: no LO-offset "
                 f"stage, so center {alt['manual']/1e6:.3f} MHz at "

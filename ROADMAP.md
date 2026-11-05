@@ -89,12 +89,30 @@ SDR Console V3.3, in all respects, even while recording.
       core, chain +18%; the whole real-time path (display chain + ezRA
       chain + source) = 125% of the Pi's 400. EzraTxtSink stays for the
       bench (`tools/display_load_bench.py --record --rec-engine legacy`).
+- [x] **SoapySDR radios: rates from the device, and the Hydrogen preset
+      picks a rate the radio has** (2026-11-05, from Tom Hagen NE9Y's
+      11-04 report: his Airspy MINI needed a source edit because the
+      'airspy' table carried the R2's 2.5/10 MS/s; the Mini does 3/6).
+      `_soapy_probe_rates` opens the device through the SoapySDR python
+      module, reads `listSampleRates`, closes it; the list replaces the
+      table when non-empty (gain ranges stay on the table — SDRplay
+      reports gain reduction). `_resolve_observation_cfg` then chooses
+      the preset's 8 MS/s when offered, else the smallest supported rate
+      >= 6 MS/s (R2 -> 10, Mini -> 6, HackRF -> 8; RTL keeps line-centred)
+      instead of asking for 8 and letting the driver round DOWN to 2.5,
+      which put the line out of band. LIVE on Rick's Airspy R2 under
+      radioconda with the E4438C at 1420.500 MHz / -70 dBm: rates probed
+      [2.5, 10], preset -> 1422.000 MHz at 10 MS/s, ezRA header 1418-1426
+      (Ray's span), carrier at 1420.496 MHz (within half a 9.8 kHz bin),
+      display 9 fps at 100% coverage; the window smoke (FFT swaps, DC
+      toggle, 8 s .fil at 10 MS/s / 2048 ch = 39,072 rows) passes on the
+      Soapy path. The low-cost-SDR check before the cut is DONE.
 - [x] **Help**: Spectrum section explains the chain, Avg α guidance for a
       weak line, new DC-suppress and Baseline (Off / Reference / Flatten)
       bullets — the Baseline group had no Help at all; timebase bullet
       says padding is per row. Installing.md section 9 regenerates at cut.
-- [ ] Before the cut: Rick's hands-on pass (FFT-size changes, Sweep, Self
-      Test on a B210; Ray-class check on an Airspy/SDRplay via radioconda),
+- [ ] Before the cut: hands-on pass DONE (B210 3273A91, 11-05) and the
+      Ray-class check DONE (Airspy R2 via radioconda, 11-05); remaining:
       version bump, Installing.md sec 9 regen, guide PDF, Release Workflow
       PDFs. Open from the same arc: a "watch the line" one-click view
       (Flatten + alpha + y lock), a visible display-coverage control instead

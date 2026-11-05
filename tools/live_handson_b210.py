@@ -24,6 +24,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--skip", default="", help="comma list of: lband,uhf,ezra,sweep,selftest")
 ap.add_argument("--fil-secs", type=float, default=10.0)
 ap.add_argument("--selftest-secs", type=int, default=30)
+ap.add_argument("--driver", default=None, help="with several radios attached, use only this driver (airspy, sdrplay, uhd...)")
 ap.add_argument("--legacy-fil", action="store_true",
                 help="A/B: record the Self Test through the 1.6.x sample-domain FilterbankSink instead of the compiled chain")
 args = ap.parse_args()
@@ -36,6 +37,9 @@ from PySide6 import QtWidgets, QtCore
 from pathlib import Path
 import dses_workbench as A
 import sigproc_fil as _sf
+if args.driver:
+    _all = A.find_all_radios
+    A.find_all_radios = lambda: [d for d in _all() if d["driver"] == args.driver]
 
 if args.legacy_fil:
     class _LegacyAsChain(_sf.FilterbankSink):
@@ -62,7 +66,28 @@ tb.start(); tb.flowgraph_started.set(); tb.show()
 print(f"radio: {tb._source.display_label}; recordings -> {tb.recording_dir}")
 
 frames = []
-tb._processor.frame_ready.connect(lambda avg, mx, mn: frames.append(time.perf_counter()))
+last_frame = {}
+def _on_frame(avg, mx, mn):
+    frames.append(time.perf_counter()); last_frame["avg"] = np.asarray(avg)
+tb._processor.frame_ready.connect(_on_frame)
+
+
+def carrier_report(expect_hz=None):
+    """Where the strongest bin of the last display frame sits (a bench
+    carrier, e.g. the E4438C at 1420.500 MHz) and how far from expectation."""
+    f = last_frame.get("avg")
+    if f is None:
+        return "no frame"
+    n = len(f)
+    freqs = tb.center_freq + np.fft.fftshift(np.fft.fftfreq(n, 1.0 / tb.samp_rate))
+    c = n // 2
+    body = f.copy(); body[c - 8: c + 9] = -999       # ignore the DC bin region
+    i = int(np.argmax(body))
+    floor = float(np.median(f))
+    s = f"strongest bin {freqs[i]/1e6:.4f} MHz, {f[i]-floor:+.1f} dB above the median floor (bin {tb.samp_rate/n/1e3:.2f} kHz)"
+    if expect_hz:
+        s += f"; expected {expect_hz/1e6:.4f} MHz -> offset {(freqs[i]-expect_hz)/1e3:+.2f} kHz"
+    return s
 blocks_log = []
 tick_dur = []
 orig_tick = tb._processor._tick
@@ -147,7 +172,10 @@ if "uhf" not in skip:
 
 if "ezra" not in skip:
     tb._apply_observation(preset_index("Hydrogen"))
-    pump(2.0)
+    pump(3.0)
+    print(f"   HI preset on {tb._source.display_label}: centre {tb.center_freq/1e6:.3f} MHz, {tb.samp_rate/1e6:g} MS/s, "
+          f"LO offset {tb.lo_offset/1e6:g} MHz, rates offered {[r/1e6 for r in tb._source.samp_rate_options]}")
+    print("   carrier:", carrier_report(1420.5e6))
     row_s = tb._ez_fft_bins * tb._ez_integ_frames / tb.samp_rate
     tb._rec_start_text = ""
     tb.set_record(1)
