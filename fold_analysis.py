@@ -483,10 +483,15 @@ def _verdict(results, source_name, quick, catalog_fold=False):
 
 def analyze_fil(fil_path, *, source_name="", runner=None, quick=False,
                 fold_p_s=None, fold_dm=None,
-                progress=lambda msg: None):
+                progress=lambda msg: None, extra_notes=None):
     """Run the canned pipeline on `fil_path`. Returns a result dict; writes
     `<basename>_prepfold.pdf` (or `_quicklook.pdf`) next to the .fil and
-    leaves working products in `<basename>_analysis/`."""
+    leaves working products in `<basename>_analysis/`.
+
+    `extra_notes`: optional commentary lines (same mini-markup as the rest:
+    a line starting with '## ' is a heading) placed before the Verdict —
+    the Self Test uses it for the injected truth and the measured
+    injection path, so the PDF is self-contained."""
     t0 = time.monotonic()
     fil_path = Path(fil_path)
     runner = runner or PrestoRunner()
@@ -619,6 +624,7 @@ def analyze_fil(fil_path, *, source_name="", runner=None, quick=False,
         "",
         "## Results", *tbl,
         "",
+        *([*extra_notes, ""] if extra_notes else []),
         f"## Verdict: {label}",
         verdict_text,
         "",

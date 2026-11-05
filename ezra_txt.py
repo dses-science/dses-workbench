@@ -335,3 +335,170 @@ if _HAVE_GR:
             self._stopping.set()
             self._worker.join(timeout=10.0)
             return self._writer.close()
+
+    # -----------------------------------------------------------------------
+    # 1.7: the channelizer runs in the flowgraph (compiled blocks). Python
+    # sees a few partial rows per second and sums them in double precision
+    # to the row boundary; EzraTxtWriter (header, format, UTC-midnight
+    # rollover) is untouched. Motivation: the Python EzraTxtSink above does a
+    # scipy FFT over the whole stream on a worker thread — cheap at the
+    # Pi's 2 MS/s drift scan, a full core's worth on an 8 MS/s HackRF host
+    # like Ray's (measured 2026-11-04/05).
+    # -----------------------------------------------------------------------
+    def sub_integration(integ_frames, frames_per_second, target_s=0.4):
+        """The compiled integrator's frame count: the largest divisor of
+        ``integ_frames`` that spans at most ``target_s`` seconds (so Python
+        sees a handful of partial rows per second and every row boundary
+        still falls on exactly ``integ_frames`` frames)."""
+        integ_frames = max(1, int(integ_frames))
+        cap = max(1, int(target_s * frames_per_second))
+        best = 1
+        for d in range(1, min(cap, integ_frames) + 1):
+            if integ_frames % d == 0:
+                best = d
+        return best
+
+    class EzraRowSink(gr.sync_block):
+        """Row-domain ezRA writer: input = power rows (float32, ``fft_bins``
+        wide, low->high, each the SUM over ``sub`` frames from integrate_ff).
+        Accumulates in float64 to ``integ_frames`` frames, keeps the central
+        ``keep_fraction`` and writes one ezRA row through EzraTxtWriter."""
+
+        def __init__(self, path, *, fft_bins, integ_frames, sub, samp_rate,
+                     center_freq_mhz, lat_deg, lon_deg, amsl, site_name,
+                     az_deg, el_deg, gain_text="", keep_fraction=1.0,
+                     provenance="DSES_Workbench",
+                     roll_daily=False, roll_prefix=""):
+            fft_bins = int(fft_bins)
+            gr.sync_block.__init__(self, name="ezra_row_sink",
+                                   in_sig=[(np.float32, fft_bins)], out_sig=None)
+            self.fft_bins = fft_bins
+            self.integ_frames = max(1, int(integ_frames))
+            self.sub = max(1, int(sub))
+            keep = int(round(fft_bins * float(keep_fraction) / 2)) * 2
+            keep = max(2, min(fft_bins, keep))
+            self._lo = (fft_bins - keep) // 2
+            self._hi = self._lo + keep
+            self.kept_bins = keep
+            fmin, fmax = EzraIntegrator.kept_span_mhz(
+                center_freq_mhz, samp_rate, keep, fft_bins)
+            self._writer = EzraTxtWriter(
+                path, lat_deg=lat_deg, lon_deg=lon_deg, amsl=amsl,
+                site_name=site_name, freq_min_mhz=fmin, freq_max_mhz=fmax,
+                bin_qty=keep, az_deg=az_deg, el_deg=el_deg,
+                gain_text=gain_text, provenance=provenance,
+                roll_daily=roll_daily, roll_prefix=roll_prefix)
+            self._acc = np.zeros(fft_bins, dtype=np.float64)
+            self._nacc = 0
+            self.dropped_samples = 0        # no worker queue here: always 0
+            self._closed = False
+
+        @property
+        def path(self):
+            return self._writer.path
+
+        @property
+        def nrows(self):
+            return self._writer.nrows
+
+        def work(self, input_items, output_items):
+            rows = input_items[0]
+            k = rows.shape[0]
+            if self._closed or self._writer._fh is None:
+                return k
+            i = 0
+            while i < k:
+                need_rows = (self.integ_frames - self._nacc) // self.sub
+                take = max(1, min(need_rows, k - i))
+                self._acc += rows[i:i + take].sum(axis=0, dtype=np.float64)
+                self._nacc += take * self.sub
+                i += take
+                if self._nacc >= self.integ_frames:
+                    mean = self._acc[self._lo:self._hi] / self._nacc
+                    self._writer.write_row(mean)
+                    self._acc[:] = 0.0
+                    self._nacc = 0
+            return k
+
+        def stop(self):
+            self.close()
+            return True
+
+        def close(self):
+            if self._closed:
+                return self._writer.close()
+            self._closed = True
+            return self._writer.close()
+
+    class EzraChain:
+        """The compiled ezRA recorder: builds and splices
+
+            upstream -> stream_to_vector(fft_bins) -> fft_vcc(fft_bins, no window)
+                     -> complex_to_mag_squared -> integrate_ff(sub) -> EzraRowSink
+
+        and presents EzraTxtSink's interface (path, nrows, kept_bins,
+        dropped_samples, close()). No window and the central keep fraction
+        match EzraIntegrator (ezCol practice), so rows agree with it to
+        single-precision rounding (test_ezra_chain.py pins this)."""
+
+        def __init__(self, path, *, fft_bins, integ_frames, samp_rate,
+                     keep_fraction=1.0, **sink_kwargs):
+            from gnuradio import blocks as _blocks, fft as _fft
+            n = int(fft_bins)
+            self.fft_bins = n
+            self.integ_frames = max(1, int(integ_frames))
+            self.sub = sub_integration(self.integ_frames, float(samp_rate) / n)
+            self._s2v = _blocks.stream_to_vector(gr.sizeof_gr_complex, n)
+            self._fft = _fft.fft_vcc(n, True, [], True, 1)       # [] = no window
+            self._mag2 = _blocks.complex_to_mag_squared(n)
+            self._integ = _blocks.integrate_ff(self.sub, n) if self.sub > 1 else None
+            self.sink = EzraRowSink(
+                path, fft_bins=n, integ_frames=self.integ_frames, sub=self.sub,
+                samp_rate=samp_rate, keep_fraction=keep_fraction, **sink_kwargs)
+            self._writer = self.sink._writer    # the app reads .paths after a rollover
+            for b in (self._s2v, self._fft, self._mag2, self._integ):
+                if b is not None:
+                    b.set_min_output_buffer(64)
+            self._upstream = None
+
+        def connect(self, tb, upstream):
+            self._upstream = upstream
+            tb.connect((upstream, 0), (self._s2v, 0))
+            tb.connect((self._s2v, 0), (self._fft, 0))
+            tb.connect((self._fft, 0), (self._mag2, 0))
+            if self._integ is not None:
+                tb.connect((self._mag2, 0), (self._integ, 0))
+                tb.connect((self._integ, 0), (self.sink, 0))
+            else:
+                tb.connect((self._mag2, 0), (self.sink, 0))
+
+        def disconnect(self, tb, upstream=None):
+            up = upstream if upstream is not None else self._upstream
+            if up is not None:
+                tb.disconnect((up, 0), (self._s2v, 0))
+            tb.disconnect((self._s2v, 0), (self._fft, 0))
+            tb.disconnect((self._fft, 0), (self._mag2, 0))
+            if self._integ is not None:
+                tb.disconnect((self._mag2, 0), (self._integ, 0))
+                tb.disconnect((self._integ, 0), (self.sink, 0))
+            else:
+                tb.disconnect((self._mag2, 0), (self.sink, 0))
+
+        @property
+        def path(self):
+            return self.sink.path
+
+        @property
+        def nrows(self):
+            return self.sink.nrows
+
+        @property
+        def kept_bins(self):
+            return self.sink.kept_bins
+
+        @property
+        def dropped_samples(self):
+            return self.sink.dropped_samples
+
+        def close(self):
+            return self.sink.close()

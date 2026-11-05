@@ -6,6 +6,101 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## v1.7.0 — ON MAIN, NOT CUT (landed 2026-11-04, Windows session; Rick: "Yes, both")
+
+Feature release (second digit). The display and the pulsar recorder move
+their FFTs into the flowgraph (GNU Radio compiled blocks); Python only ever
+handles finished vectors. Origin: Ray (11-04), "the current Workbench
+software doesn't seem to work in real time"; bar set by Rick the same day:
+SDR Console V3.3, in all respects, even while recording.
+
+- [x] **Display channelizer in the flowgraph** (`DisplayChannelizer`:
+      stream_to_vector -> keep_one_in_n -> fft_vcc -> complex_to_mag_squared
+      -> `SpectrumAccumulator`; `SpectrumProcessor` reads one averaged
+      vector per tick). Full coverage of the stream at every rate up to
+      26 MS/s (`DISPLAY_FULL_COVERAGE_RATE`), recording or not: the per-tick
+      CPU budget, the stride shedding and the recording-time budget cut are
+      gone; `set_recording_active` is a no-op. FFT-size change swaps the
+      chain under lock/unlock on the running flowgraph (same mechanism as
+      the recording sinks); window change is live (`fft_vcc.set_window`);
+      DC suppress is a post-FFT main-lobe bridge (no per-sample cost, no
+      relock; the bridge is adaptive — it walks out from the centre bin while
+      bins sit > 3 dB above the local floor, cap 256 bins / 1/16 of the span).
+      LIVE A/B on B210 3273A91 (`tools/display_ab_b210.py`, 16 MS/s, gain 45,
+      65536-pt Rectangular, both engines on the same samples): 1.6.1 math and
+      1.7 chain agree to 0.03 dB across the band, floor -151.1 dBm, spurs
+      identical; the +17 dB feature at the tuned centre is the radio's LO
+      hump (44 kHz wide at +3 dB, 15 kHz at +6 dB) — 1.6.1's per-block mean
+      subtraction removed NONE of it (it only strips what is slower than one
+      block), the 1.7 bridge cuts it to +4 dB. Measured on the Haswell Pi 5 with the real app: 0.2 ms per
+      tick on the GUI thread (was 8-34 ms) and 100% coverage while a 20 MS/s
+      .fil recording runs. Tests: `test_display_sensitivity.py` (7 checks on
+      the real chain), `test_display_app_smoke.py` (headless real window,
+      playback; `--live [--record-fil]` on a radio — passed on the Pi's B210
+      at 20 MS/s), `tools/display_load_bench.py` (`--engine app|legacy|none`).
+- [x] **Pulsar .fil recorder in the flowgraph** (`sigproc_fil.FilterbankChain`:
+      stream_to_vector -> fft_vcc(numpy Hann taps) -> |.|^2 [-> integrate_ff]
+      -> `FilterbankSpectraSink`, which writes rows and pads rx_time gaps in
+      whole rows — within one tsamp of the exact gap, measured against the
+      original time reference so rounding never accumulates). Rows agree with
+      the byte-validated numpy channelizer to single-precision rounding
+      (max 6e-5 relative, rms 1e-6; header byte-identical). Cost on the Pi 5
+      at 16 MS/s / 2044 ch: 92% of one core (legacy Python sink 146%, bare
+      chain 88%) with `batch_rows=32` (`set_output_multiple`; the final
+      partial batch is dropped at stop, <= 4 ms). The self test uses the same
+      chain. `FilterbankSink` (sample-domain) stays for tools/tests. Tests:
+      `test_fil_chain.py` (numerics, gaps, splice, batching),
+      `tools/fil_load_bench.py` (`--engine app|legacy|raw`),
+      `tools/fil_fold_compare.py` (prepfold on the same capture both ways — RESULT 2026-11-04: a 60 s synthetic P=100 ms / DM 50 capture written by both writers folds to IDENTICAL results, chi2_red 274.629 / P 0.1 s / DM 48.02 on both, row data max 8.8e-6 relative; the chain file is 28 rows shorter = the final partial batch).
+- [x] **Self Test measures its injection path and sets the TX gain**
+      (2026-11-05, Rick: "fix the self test"). The August design relied on
+      the B210's internal TX->RX leakage at MINIMUM TX gain, which worked
+      only because 8003886's side-A switch sat half open; on 2026-11-05
+      both lab units isolated normally and every fold came back as noise
+      (standalone harness, legacy sink and the Pi's own stack alike — not
+      a 1.7 regression). Now `_selftest_set_injection` splices a CW tone
+      at +fs/8, reads it off the live display chain against the floor
+      (referred to a 4096-point FFT), and steps the TX gain 0/10/20/30/40
+      dB until the tone stands `SELFTEST_INJECT_TARGET_DB` (+30) above the
+      floor; the pulse train then replaces the tone in the same relock.
+      Result shows the achieved level and gain (dialog + the fold PDF's
+      new "Self test" section with the serial, via
+      `fold_analysis.analyze_fil(extra_notes=)`), with a loopback-with-
+      30-dB-pad hint if even the cap falls short. On the genuine B210
+      3273A91: +7.5 dB at 0 dB -> +30.7 dB at 30 dB; three runs PASS with
+      the period exact, DM 44.7/52.4/53.4, chi2 16,818 / 1,455 / 1,420
+      (the August best on the clone was 1,118). New tools:
+      `tools/b210_leakage_probe.py`, `tools/live_handson_b210.py`
+      (headless hands-on driver, `--legacy-fil` A/B), `tools/display_ab_b210.py`.
+- [x] **ezRA drift-scan recorder in the flowgraph** (2026-11-05, Rick:
+      "Yes, do it" — the third of the three Python-in-stream blocks).
+      `ezra_txt.EzraChain`: stream_to_vector -> fft_vcc(no window, ezCol
+      practice) -> |.|^2 -> integrate_ff(sub) -> `EzraRowSink`, where `sub`
+      is the largest divisor of integ_frames spanning <= 0.4 s
+      (`sub_integration`: 775 frames at 8 MS/s, 155 at 2 MS/s), so Python
+      sees a few partial rows per second, sums them in float64 to the exact
+      row boundary, applies the central keep fraction and hands the row to
+      the untouched EzraTxtWriter (header, format, UTC-midnight rollover).
+      Rows agree with EzraIntegrator / the legacy EzraTxtSink to 0.0001 dB
+      with an identical header (`test_ezra_chain.py`, 4 checks). Live
+      through the app on the B210: Hydrogen preset, 2 MS/s + 1.5 MHz LO
+      offset, one 63 s row, display at full coverage. Pi 5 at 8 MS/s (Ray's
+      rate; source chain alone 56% of a core): legacy recorder +57% of a
+      core, chain +18%; the whole real-time path (display chain + ezRA
+      chain + source) = 125% of the Pi's 400. EzraTxtSink stays for the
+      bench (`tools/display_load_bench.py --record --rec-engine legacy`).
+- [x] **Help**: Spectrum section explains the chain, Avg α guidance for a
+      weak line, new DC-suppress and Baseline (Off / Reference / Flatten)
+      bullets — the Baseline group had no Help at all; timebase bullet
+      says padding is per row. Installing.md section 9 regenerates at cut.
+- [ ] Before the cut: Rick's hands-on pass (FFT-size changes, Sweep, Self
+      Test on a B210; Ray-class check on an Airspy/SDRplay via radioconda),
+      version bump, Installing.md sec 9 regen, guide PDF, Release Workflow
+      PDFs. Open from the same arc: a "watch the line" one-click view
+      (Flatten + alpha + y lock), a visible display-coverage control instead
+      of the silent >26 MS/s decimation, and the question to Ray — which
+      program he compares against, and a screenshot of his settings.
+
 ## v1.6.1 — SHIPPED 2026-10-04 (cut + published from Windows, release commit 8d44a06, tag v1.6.1; Rick: "Fix the launcher and cut 1.6.1")
 
 Bug-fix release (third digit); the program itself is unchanged from 1.6.0.
@@ -804,6 +899,42 @@ menu bar!) + drift-scan box test (dock behavior on headless Openbox/xrdp
 
 ## Backlog / unscheduled
 
+- [ ] **Show the B210's negotiated USB speed in the Radio panel** and warn
+      when the sample rate exceeds what the link can carry (2026-11-05: a
+      B210 on the USB 3 extension cable came up on an untrained USB 2 link,
+      ~4 MS/s, and 16 MS/s recordings silently padded ~70% of the stream;
+      UHD logs "Operating over USB 2." at open and warns "exceeds the
+      maximum capacity of the connection" — surface both).
+
+- [x] **Self Test: the free leakage path is gone — measure it, then inject
+      enough signal** (2026-11-05; DONE the same day, see v1.7.0 at the top). The B210 Self Test relies on internal
+      TX->RX leakage at MINIMUM TX gain (the August design, validated on
+      8003886 when its side-A switch sat half-open at 4.9 dB isolation).
+      On 2026-11-05 both lab units (3273A91 here, 8003886 on the Pi) show
+      normal isolation: a CW tone at min gain reads only +1.4 / +8.9 dB
+      above the RX floor (`tools/b210_leakage_probe.py`), the pulse train
+      is ~27 dB under the noise per bin, and every fold comes back at
+      chi2 2-7 with a wandering DM — on the 1.6.1 code and on the Pi's own
+      stack alike (not a 1.7 regression). The same capture at TX gain
+      20 dB grades PASS with the period exact. Do: (1) run the leakage
+      probe at the start of the test and show the level; (2) if it is
+      below a threshold, raise TX gain in steps under the protected-band
+      rule (420/1420 MHz at a few microwatts into an open port) or ask for
+      the cabled loopback with a 30 dB pad; (3) record the achieved
+      injection level in the result PDF. Why the isolation changed on
+      both hosts (FPGA image / UHD update?) is a separate question —
+      compare UHD + image versions against the 09-14 matrices.
+
+- [ ] **A running PRESTO analysis starves the live display and blocks the
+      Self Test** (seen 2026-11-05 in the headless hands-on pass: with the
+      default "Analyze when done", the auto-analysis of a 639 MB .fil ran
+      for minutes on the analysis worker thread; the display dropped to
+      1.5 fps while it ran and the Self Test refused to start with "An
+      analysis is already in progress"). Pre-1.7 behaviour (the worker
+      thread holds the GIL through fold_analysis's numpy stages). Options:
+      run fold_analysis in a subprocess (the PRESTO calls already are),
+      or at least say so on the status bar while it runs.
+
 - [ ] **Startup failures later than the launcher's 10 s window are still
       silent on Windows** (from the 1.6.1 work, 2026-10-04). The launcher
       now reports a program that stops within 10 s, but a fault after the
@@ -883,7 +1014,7 @@ menu bar!) + drift-scan box test (dock behavior on headless Openbox/xrdp
       the app just fills it correctly. Serves the manually-steered
       home stations (Ray: fixed az, jack-screw el) and the
       Dec-stepping survey directly.
-- [ ] **Constant-statistics display while recording** (from Ray's
+- [x] **Constant-statistics display while recording — LANDED 2026-11-04 as the v1.7.0 display channelizer (see the top of this file)** (from Ray's
       2026-09-06 report, diagnosed 09-07): with recording active the
       display tick budget drops 0.4→0.12 and on a loaded host the Welch
       block count collapses toward 1; in dB-averaging mode the trace then
@@ -892,6 +1023,78 @@ menu bar!) + drift-scan box test (dock behavior on headless Openbox/xrdp
       Fix: accumulate blocks ACROSS ticks to a target N while recording
       (slower update instead of a biased trace), or correct the small-N
       bias + show a "display averaging reduced" status note.
+      **MEASURED 2026-11-04 (Ray, 11-04: "the current Workbench software
+      doesn't seem to work in real time. I love to watch the shape and
+      amplitude change" — his HI line on the HackRF). Bench:
+      `tools/display_load_bench.py` — synthetic 8 MS/s noise + a +6% HI-like
+      bump (0.253 dB) through the REAL display path, optional ezRA recorder
+      beside it, process pinned to 1 core + competing threads. Displayed
+      trace noise sigma (dB, per bin, alpha 0.1) and line/sigma:**
+      * today's Python Welch path, 1024-pt: idle 0.029 / 8.4; recording
+        0.043 / 5.8 (budget cut 0.4->0.12 halves coverage to 49% even on
+        the 64-core dev box); recording + 1 competing thread 0.052 / 4.8.
+      * 4096-pt (the velocity resolution a line watcher picks): idle
+        0.061 / 4.0; RECORDING 0.105 / 2.4 — the 6% line is 2.4 sigma per
+        bin = gone into the noise while the drift scan records, on a FAST
+        host; 1 core + recording (+busy) 0.10-0.12 / 2.2-2.4. GUI thread
+        cost 8-18 ms per 100 ms tick here, so an old laptop pays 5-10x
+        that = a stuttering GUI on top.
+      * candidate C++ engine (stream_to_vector -> fft_vcc -> mag² ->
+        accumulator sink; the tick reads ONE vector): GUI tick 0.1 ms (vs
+        8-18), coverage 100% idle at every rate; 1 core + recording 0.073 /
+        3.5 (vs 0.101 / 2.4); 1 core + recording + busy 0.084 / 3.0 (vs
+        0.100 / 2.4). The remaining shortfall on one saturated core is the
+        source + ezRA recorder starving too (the recorder also fell behind
+        there), not the display.
+      **PLAN (proposed 2026-11-04): move the display channelizer into the
+      flowgraph** — C++ FFT (fft_vcc with the window taps; set_window for
+      window changes; FFT-size change = relock + swap the branch) and
+      mag², a Python accumulator sink that only does sum/max/min over the
+      per-block power rows at C speed, DC suppress via filter.dc_blocker_cc
+      on the display tap (recorders stay on the raw stream); drop the
+      per-tick CPU budget + stride + `set_recording_active` cut entirely
+      (nothing left on the GUI thread to budget), keep_one_in_n stays only
+      as an extreme-rate guard. Keeps the SpectrumProcessor API (EMA, holds
+      with per-block peak/min, baseline, smoothing, units) so the plots,
+      Sweep and Self Test are untouched. Full coverage and constant
+      statistics whether or not a recording runs, GUI never stalls — on
+      every host. Pair it with a Help section for the Baseline group (none
+      exists today; Flatten + y Autoscale is how a 0.25 dB line gets seen
+      at all) and a one-click "watch the line" view (Flatten, alpha ~0.05,
+      y locked to the flattened floor). OPEN: which program Ray watches it
+      in and a screenshot of his Workbench settings (Rick to ask).
+      **PI 5 NUMBERS (Haswell DSES-Drift-Scan, idle, 2026-11-04; both
+      benches run there over Tailscale; CPU = percent of the four cores
+      = 400):** the cheap source chain alone costs 26% at 16 MS/s (GR's
+      Gaussian noise source alone is a full core at 16 MS/s, so the
+      benches use a repeating buffer). DISPLAY at 16 MS/s / 4096-pt:
+      Python 59% but at 49% coverage (it sheds half the stream to fit the
+      GUI-thread budget; 34 ms of every 100 ms tick on the GUI thread) vs
+      C++ 90% at 100% coverage with 0.2 ms on the GUI thread. Display
+      beside the 8 MS/s ezRA recording: Python 27% at 33% coverage
+      (line/sigma 4.1) vs C++ 72% at 100% (7.4). PULSAR .FIL WRITER
+      (`tools/fil_load_bench.py`, real NVMe at 424 MB/s): Python keeps up
+      at both presets with 0 lost samples — 146% at 16 MS/s / 2044 ch and
+      140% at 20 MS/s / 256 ch x16 — vs the C++ chain (fft_vcc -> mag² ->
+      integrate_ff -> file_sink) at 77% and 55%. So on the Pi a 16 MS/s
+      pulsar session today is UHD source + 146% writer + 59% half-coverage
+      display + GUI ≈ the whole machine; the .fil writer is its single
+      biggest consumer. Buffer batching (set_min_output_buffer on the
+      vector edges) changed nothing — the cost is the FFT work itself.
+      **RANKING after the Pi (Rick, 11-04: the Haswell pulsar recorder IS
+      the Pi 5):** (1) display engine (Ray + the Pi's GUI stalls), (2)
+      .fil writer to the compiled chain — saves ~0.7 core at 16 MS/s on
+      the Pi; the gap/timebase logic stays in a Python sink that receives
+      the C++ spectra plus the propagated rx_time tags and pads whole
+      spectra; MUST be re-validated against PRESTO (the numpy channelizer
+      is byte-validated; FFTW single precision will differ in the last
+      bits — fold the same capture both ways before switching), (3) ezRA
+      recorder (cheap at the Pi's 2 MS/s drift-scan rate: 71% all-in;
+      worth it only for 8 MS/s HackRF-class hosts). Design note for weak
+      hosts: full coverage costs what the FFT costs (~0.7-0.9 core at
+      8-16 MS/s on a Pi), so keep an explicit, visible display-coverage
+      control (100/50/25% via keep_one_in_n on the vector edge) instead of
+      the silent per-tick stride.
 - [x] **Planner sky math: IERS download OFF + closed form PRECESSED — DONE
       2026-09-11 (Rick's call, same morning).** Two findings corrected the
       09-10 note: (1) astropy 8 re-downloads the 3.7 MB IERS-A table on

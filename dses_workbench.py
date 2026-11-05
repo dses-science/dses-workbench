@@ -115,10 +115,10 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 import numpy as np
 from scipy.signal import windows as scipy_windows
 from scipy.ndimage import median_filter
-from scipy import fft as scipy_fft   # ~2x numpy.fft for batch transforms + workers=
 
 from gnuradio import blocks
 from gnuradio import eng_notation
+from gnuradio import fft as grfft
 from gnuradio import gr
 from gnuradio import uhd
 
@@ -179,9 +179,9 @@ WINDOWS = {
 }
 # Larger sizes give finer RBW (= sample_rate / N) and a lower per-bin noise
 # floor (~3 dB per doubling) — the real lever for weak-signal / deep-space work.
-# The max here MUST be <= CHUNK_SIZE (the flowgraph vector the sample sink holds)
-# so latest(n) always has n *contiguous* samples for a clean FFT. The plot
-# downsamples the long curves so drawing stays cheap.
+# Each size is one compiled fft_vcc in the flowgraph (DisplayChannelizer); a
+# change swaps the chain under lock/unlock. The plot downsamples the long
+# curves so drawing stays cheap.
 FFT_SIZES = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
 
 
@@ -579,106 +579,149 @@ class Settings:
         self.save()
 
 
-# The flowgraph groups samples into CHUNK_SIZE-sample vectors (stream_to_vector)
-# and the sample sink queues them for the display integrator. It MUST be >= the
-# largest FFT in FFT_SIZES so a full-length FFT gets that many *contiguous*
-# samples, and every FFT_SIZES entry divides it exactly, so a queued chunk
-# reshapes into whole FFT blocks with no remainder.
-CHUNK_SIZE = 65536  # must be >= max(FFT_SIZES)
+# ---------------------------------------------------------------------------
+# Display channelizer (1.7): the display FFT runs INSIDE the flowgraph, in
+# GNU Radio's compiled blocks, so the display integrates every sample at any
+# rate and the GUI thread only ever handles one averaged vector per tick.
+# Through 1.6.x the FFT ran in numpy on the GUI thread under a per-tick CPU
+# budget that was cut to a third while any recording ran — on a loaded host
+# (and on EVERY host while recording) the trace silently integrated a
+# fraction of the stream and a 6% hydrogen line sank into the noise (Ray,
+# 2026-11-04; measurements in ROADMAP 'Constant-statistics display' and
+# tools/display_load_bench.py, whose --engine python keeps the old design
+# for comparison).
+# ---------------------------------------------------------------------------
 
-# Bound on the sink's pending-chunk queue (memory/backlog guard). At the
-# highest supported rates the flowgraph delivers ~300-400 chunks/s and the
-# display drains ~10x/s, so ~40 chunks accumulate per tick; 96 gives ample
-# headroom (96 x 512 KB = 48 MB worst case) while a stalled GUI can't hoard
-# unbounded sample memory. Overflow drops the OLDEST chunks (display favors
-# fresh data) and is counted, so the integrator can report true coverage.
-MAX_PENDING_CHUNKS = 96
+# Every rate up to this is displayed at FULL coverage (every sample goes
+# through the display FFT). Above it keep_one_in_n drops whole FFT blocks so
+# the FFT's CPU cost stays bounded (coverage = 1/n). 26 MS/s covers every rate
+# the B210 pulsar presets use. Cost reference (2026-11-04): a 4096-point
+# display FFT at full coverage is ~0.9 of one Raspberry Pi 5 core at 16 MS/s.
+DISPLAY_FULL_COVERAGE_RATE = 26e6
 
 
-class SampleBufferSink(gr.sync_block):
-    """Queues arriving CHUNK_SIZE-sample complex-baseband vectors for the
-    display integrator (drain()), and keeps the newest one for latest().
-    Fed by stream_to_vector (+ keep_one_in_n at extreme rates) so this
-    pure-Python sync_block sees whole vectors, not raw samples — Python
-    can't keep up with 20 MS/s sample-by-sample, but ~300 vector
-    callbacks/s is cheap. Sensitivity fix (v1.1.7): the queue lets the
-    display integrate (Welch-average) every sample the flowgraph delivers
-    instead of one FFT-frame snapshot per screen tick."""
+def display_decim_for(samp_rate):
+    """keep_one_in_n factor for the display's FFT-block stream at samp_rate:
+    1 (full coverage) up to DISPLAY_FULL_COVERAGE_RATE, then the smallest n
+    that brings the displayed sample rate back under it."""
+    return max(1, -(-int(float(samp_rate)) // int(DISPLAY_FULL_COVERAGE_RATE)))
 
-    def __init__(self, chunk_size=CHUNK_SIZE):
-        gr.sync_block.__init__(
-            self,
-            name="sample_buffer_sink",
-            in_sig=[(np.complex64, chunk_size)],
-            out_sig=None,
-        )
+
+class SpectrumAccumulator(gr.sync_block):
+    """Terminal block of the display channelizer: receives per-FFT-block
+    POWER vectors (float32, fft_size wide, bins already in ascending-frequency
+    order) from fft_vcc -> complex_to_mag_squared and accumulates the block
+    sum (float64), the block count and, when asked, the per-bin max/min for
+    the 'peak' hold detector. take() hands the GUI tick everything accumulated
+    since the previous take and resets. The numpy reductions (the only real
+    cost, a few microseconds per block) run on the GNU Radio thread outside
+    the lock; the lock only guards the merge."""
+
+    def __init__(self, fft_size):
+        n = int(fft_size)
+        gr.sync_block.__init__(self, name="spectrum_accumulator",
+                               in_sig=[(np.float32, n)], out_sig=None)
+        self._n = n
         self._lock = threading.Lock()
-        self._chunk_size = int(chunk_size)
-        self._buf = np.zeros(self._chunk_size, dtype=np.complex64)
-        self._filled = False
-        self._pending = []        # queued chunk copies, oldest first
-        self._dropped = 0         # chunks discarded since the last drain()
-        self._blank = False       # discard the next non-empty drain (retune barrier)
+        self._extremes = False
+        self._blank = False
+        self._reset_locked()
+
+    def _reset_locked(self):
+        self._sum = np.zeros(self._n, dtype=np.float64)
+        self._max = None
+        self._min = None
+        self._count = 0
 
     @property
-    def chunk_size(self):
-        return self._chunk_size
+    def fft_size(self):
+        return self._n
 
-    def set_capacity(self, _n):
-        # Capacity is fixed at chunk_size (set at flowgraph construction).
-        # Kept as a no-op so SpectrumProcessor.set_fft_size still calls it
-        # without needing flowgraph relock.
-        return
+    def set_track_extremes(self, on):
+        """Also track per-block max/min (two more reductions per block)."""
+        self._extremes = bool(on)
 
     def work(self, input_items, output_items):
-        chunks = input_items[0]
-        n = len(chunks)
-        if n > 0:
+        x = input_items[0]
+        rows = x.shape[0]
+        if rows:
+            s = x.sum(axis=0, dtype=np.float64)
+            mx = mn = None
+            if self._extremes:
+                mx = x.max(axis=0)
+                mn = x.min(axis=0)
             with self._lock:
-                for c in chunks:
-                    # Copy: GNU Radio reuses its buffers after work() returns.
-                    if len(self._pending) >= MAX_PENDING_CHUNKS:
-                        self._pending.pop(0)
-                        self._dropped += 1
-                    self._pending.append(np.array(c, dtype=np.complex64))
-                self._buf[:] = chunks[-1]
-                self._filled = True
-        return n
+                self._sum += s
+                self._count += rows
+                if mx is not None:
+                    self._max = mx if self._max is None else np.maximum(self._max, mx)
+                    self._min = mn if self._min is None else np.minimum(self._min, mn)
+        return rows
 
-    def latest(self, n):
-        """Return the most recent n samples (chronological order), or None
-        if no chunk has arrived yet or n exceeds chunk_size."""
-        n = int(n)
+    def take(self):
+        """(power_sum, block_max|None, block_min|None, nblocks) accumulated
+        since the previous take, then reset. After flush() the first NON-EMPTY
+        take is discarded (returned with nblocks 0): blocks in flight through
+        stream_to_vector / the FFT when the flush ran can still carry
+        pre-retune samples that a Qt-side flush cannot see."""
         with self._lock:
-            if not self._filled or n > self._chunk_size or n <= 0:
-                return None
-            return self._buf[-n:].copy()
-
-    def drain(self):
-        """Take every queued chunk (oldest first) plus the count of chunks
-        dropped to the queue bound since the previous drain. After a flush(),
-        the first NON-EMPTY drain is discarded (returned as empty): those
-        chunks can contain pre-retune samples that were already in flight in
-        the GR pipeline / partial stream_to_vector fill / LO settle when the
-        flush ran, which a Qt-side flush cannot see."""
-        with self._lock:
-            pending, self._pending = self._pending, []
-            dropped, self._dropped = self._dropped, 0
-            if self._blank and pending:
+            out = (self._sum, self._max, self._min, self._count)
+            self._reset_locked()
+            if self._blank and out[3]:
                 self._blank = False
-                return [], dropped
-        return pending, dropped
+                return self._sum, None, None, 0
+        return out
 
     def flush(self):
-        """Retune barrier: discard queued chunks, invalidate latest(), and
-        arm drain-blanking so in-flight stale samples are dropped too. Call
-        on retune / rate change so stale-frequency samples never enter the
-        new average."""
+        """Retune barrier: drop what is accumulated and arm the one-take blank.
+        Call on retune / rate change so stale-frequency samples never enter
+        the new average (matters for Sweep, which retunes every few 100 ms)."""
         with self._lock:
-            self._pending = []
-            self._dropped = 0
-            self._filled = False
+            self._reset_locked()
             self._blank = True
+
+
+class DisplayChannelizer:
+    """The display tap's compiled chain, built for ONE FFT size:
+
+        upstream -> stream_to_vector(N) -> keep_one_in_n -> fft_vcc(N, window)
+                 -> complex_to_mag_squared(N) -> SpectrumAccumulator(N)
+
+    A size change builds a new chain and swaps it in under top_block lock /
+    unlock (the mechanism the recording sinks already use); a window change
+    is live (fft_vcc.set_window). Everything but the accumulator is C++, so
+    the FFT work never touches the GUI thread and never shrinks when a
+    recording runs."""
+
+    def __init__(self, fft_size, window_taps, decim=1):
+        n = int(fft_size)
+        self.fft_size = n
+        self.decim = max(1, int(decim))
+        self.head = blocks.stream_to_vector(gr.sizeof_gr_complex, n)
+        self._keep = blocks.keep_one_in_n(gr.sizeof_gr_complex * n, self.decim)
+        # shift=True: output bins run -fs/2 .. +fs/2 (np.fft.fftshift order).
+        self._fft = grfft.fft_vcc(n, True, [float(w) for w in window_taps], True, 1)
+        self._mag2 = blocks.complex_to_mag_squared(n)
+        self.accumulator = SpectrumAccumulator(n)
+
+    def connect_chain(self, tb):
+        tb.connect((self.head, 0), (self._keep, 0))
+        tb.connect((self._keep, 0), (self._fft, 0))
+        tb.connect((self._fft, 0), (self._mag2, 0))
+        tb.connect((self._mag2, 0), (self.accumulator, 0))
+
+    def disconnect_chain(self, tb):
+        tb.disconnect((self.head, 0), (self._keep, 0))
+        tb.disconnect((self._keep, 0), (self._fft, 0))
+        tb.disconnect((self._fft, 0), (self._mag2, 0))
+        tb.disconnect((self._mag2, 0), (self.accumulator, 0))
+
+    def set_window(self, window_taps):
+        self._fft.set_window([float(w) for w in window_taps])
+
+    def set_decim(self, n):
+        self.decim = max(1, int(n))
+        self._keep.set_n(self.decim)
 
 
 def _fmt_hz(hz: float) -> str:
@@ -695,43 +738,39 @@ def _fmt_hz(hz: float) -> str:
 
 
 class SpectrumProcessor(QObject):
-    """Drains a SampleBufferSink on a QTimer, Welch-averages a windowed FFT
-    over EVERY block that arrived since the last tick (the v1.1.7 display
-    sensitivity fix — previously one FFT-frame snapshot per tick, ~0.3% of
-    the stream), applies exponential averaging plus optional max/min hold,
-    and emits `frame_ready(avg_db, max_db, min_db)` for the plot widgets.
+    """Reads the DisplayChannelizer's accumulator on a QTimer — ONE power
+    vector averaged over every FFT block the compiled chain produced since
+    the last tick — applies exponential averaging plus optional max/min hold,
+    baseline removal and smoothing, and emits `frame_ready(avg_db, max_db,
+    min_db)` for the plot widgets.
 
-    Numerics: per-block transforms run in single precision (complex64 — the
-    B210's 12-bit samples leave ~5 orders of magnitude of headroom) while
-    the across-blocks power average accumulates in float64: single-precision
-    transform, double-precision accumulate. An adaptive stride sheds blocks
-    if the per-tick math overruns its time budget (slow machines / huge
-    FFTs), degrading coverage gracefully instead of freezing the GUI."""
+    Numerics: the per-block transform runs in single precision inside
+    fft_vcc (complex64 — the B210's 12-bit samples leave ~5 orders of
+    magnitude of headroom) while the across-blocks power sum accumulates in
+    float64: single-precision transform, double-precision accumulate. The
+    tick itself costs well under a millisecond, so there is no per-tick CPU
+    budget, no block shedding and nothing to give up while a recording runs
+    (1.7; the 1.1.7-1.6.x numpy design did all three on the GUI thread)."""
 
     frame_ready = Signal(object, object, object)  # avg_db, max_db|None, min_db|None
 
-    def __init__(self, sink, fft_size=1024, window_name="blackman-harris",
+    # Bins either side of DC bridged by the DC-suppress option: the window's
+    # main-lobe half-width (a DC spike leaks that far whatever its source).
+    _DC_HALF_WIDTH = {'rectangular': 1, 'hamming': 2, 'hann': 2,
+                      'blackman': 3, 'blackman-harris': 4, 'flat-top': 5}
+
+    def __init__(self, channelizer, window_name="blackman-harris",
                  update_hz=10.0, normalize=False, dc_suppress=True,
                  unit='relative', gain_db=0.0, cal_offset_db=0.0,
                  power_avg=False, smooth_bins=0,
                  baseline_mode='off', flatten_bins=151, parent=None):
         super().__init__(parent)
-        self._sink = sink
-        self._fft_size = int(fft_size)
+        self._chan = channelizer
+        self._acc = channelizer.accumulator
+        self._fft_size = int(channelizer.fft_size)
         self._window_name = window_name
         self._window = WINDOWS[window_name](self._fft_size).astype(np.float64)
-        self._window32 = self._window.astype(np.float32)   # batch-path window
-        # Per-tick CPU budget: the block count is bounded BEFORE the math via
-        # a learned per-block cost estimate, so even a full backlog (event
-        # loop stalled by a dialog/drag) can never freeze the GUI. Blocks are
-        # strided (not truncated) so the average still spans the whole tick.
-        self._tick_budget_frac = 0.4                    # fraction of the interval
-        self._budget_frac_normal = 0.4
-        self._budget_frac_recording = 0.12  # yield GIL/CPU to recording sinks
-        self._sec_per_block = 2e-8 * self._fft_size     # learned each tick (EMA)
-        self._stride = 1               # diagnostics: last tick's stride
         self._last_blocks_used = 0     # diagnostics: blocks in last average
-        self._last_dropped = 0         # diagnostics: chunks lost to backlog
         self._normalize = bool(normalize)
         self._dc_suppress = bool(dc_suppress)
         self._unit = unit if unit in ('relative', 'dbfs', 'dbm') else 'relative'
@@ -760,7 +799,6 @@ class SpectrumProcessor(QObject):
         self._avg = None
         self._max = None
         self._min = None
-        self._sink.set_capacity(max(8192, self._fft_size * 2))
 
         self._timer = QTimer(self)
         self._timer.setInterval(max(20, int(1000.0 / update_hz)))
@@ -777,16 +815,27 @@ class SpectrumProcessor(QObject):
         wpow = float(np.sum(w * w)) or 1.0
         self._enbw = (self._fft_size * wpow) / (self._wsum * self._wsum)
 
-    @Slot(int)
-    def set_fft_size(self, n):
-        self._fft_size = int(n)
+    @property
+    def window_name(self):
+        return self._window_name
+
+    @property
+    def fft_size(self):
+        return self._fft_size
+
+    def attach(self, channelizer):
+        """Point the processor at a (new) DisplayChannelizer. The main window
+        owns the FFT-size change — it builds the chain for the new size and
+        swaps it into the flowgraph — and then calls this; the averaging
+        state, holds and OFF reference are bin-count specific and reset."""
+        self._chan = channelizer
+        self._acc = channelizer.accumulator
+        self._fft_size = int(channelizer.fft_size)
         self._window = WINDOWS[self._window_name](self._fft_size).astype(np.float64)
-        self._window32 = self._window.astype(np.float32)
-        self._sink.set_capacity(max(8192, self._fft_size * 2))
         self._recompute_window_norm()
-        self._sec_per_block = 2e-8 * self._fft_size   # re-learn cost at this size
         self._avg = self._max = self._min = None
         self._reference = None          # different bin count invalidates the OFF ref
+        self._sync_extremes()
 
     @Slot(str)
     def set_window(self, name):
@@ -794,25 +843,32 @@ class SpectrumProcessor(QObject):
             return
         self._window_name = name
         self._window = WINDOWS[name](self._fft_size).astype(np.float64)
-        self._window32 = self._window.astype(np.float32)
         self._recompute_window_norm()
+        self._chan.set_window(self._window)     # live, no flowgraph relock
 
     @Slot(float)
     def set_average_alpha(self, alpha):
         """alpha in (0, 1]. 1.0 = no averaging, smaller = more smoothing."""
         self._avg_alpha = float(np.clip(alpha, 1e-3, 1.0))
 
+    def _sync_extremes(self):
+        """The accumulator only tracks per-block max/min when a hold is on
+        AND the detector is 'peak' (two extra reductions per block)."""
+        self._acc.set_track_extremes(self._hold_peak and (self._max_on or self._min_on))
+
     @Slot(bool)
     def set_max_hold(self, on):
         self._max_on = bool(on)
         if not on:
             self._max = None
+        self._sync_extremes()
 
     @Slot(bool)
     def set_min_hold(self, on):
         self._min_on = bool(on)
         if not on:
             self._min = None
+        self._sync_extremes()
 
     @Slot()
     def reset_max_hold(self):
@@ -837,13 +893,11 @@ class SpectrumProcessor(QObject):
 
     @Slot(bool)
     def set_recording_active(self, on):
-        """While ANY recording runs, shrink the display's per-tick CPU
-        budget: the Welch math's GIL time otherwise starves the Python
-        recording sinks on the GNU Radio threads and the radio overflows
-        (observed live at 16 MS/s, 2026-08-02). The adaptive stride sheds
-        display coverage automatically; the recording gets the cycles."""
-        self._tick_budget_frac = (self._budget_frac_recording if on
-                                  else self._budget_frac_normal)
+        """Kept for the callers: through 1.6.x this shrank the display's
+        per-tick CPU budget to a third while a recording ran, which is where
+        'the line disappears when I record' came from. The compiled display
+        chain costs the GUI thread nothing, so there is nothing to give up."""
+        return
 
     @Slot(str)
     def set_hold_detector(self, mode):
@@ -856,6 +910,7 @@ class SpectrumProcessor(QObject):
         if peak != self._hold_peak:
             self._hold_peak = peak
             self._max = self._min = None
+        self._sync_extremes()
 
     @Slot(str)
     def set_baseline_mode(self, mode):
@@ -886,9 +941,7 @@ class SpectrumProcessor(QObject):
         frequency must not be Welch-averaged into the new one (matters for Sweep
         stepping, which retunes every few hundred ms)."""
         self._avg = self._max = self._min = None
-        flush = getattr(self._sink, "flush", None)
-        if flush is not None:
-            flush()
+        self._acc.flush()
 
     @Slot(bool)
     def set_window_normalized(self, on):
@@ -926,61 +979,73 @@ class SpectrumProcessor(QObject):
     def set_update_hz(self, hz):
         self._timer.setInterval(max(20, int(1000.0 / float(hz))))
 
+    # DC-suppress: a bin counts as part of the spike while it sits this far
+    # above the local floor (power ratio). 3 dB keeps a hydrogen line that is
+    # centred on the tuning (a few tenths of a dB, ~1 dB on a big dish) out
+    # of the bridge and is still >10 sigma above the noise of one display
+    # frame at the sizes/rates in use (a B210's LO hump at 16 MS/s measured
+    # 2026-11-04: +17 dB, 44 kHz wide at +3 dB, 15 kHz at +6 dB).
+    _DC_SPIKE_RATIO = 10.0 ** 0.3
+
+    def _bridge_dc(self, arr):
+        """Display-only DC suppression: replace the DC spike with a straight
+        line between its neighbours, in the power domain. Zero-IF radios
+        (HackRF, RTL-SDR, the B210's AD9361) put a DC-offset / LO-leakage
+        spike at the tuned centre; the recorders tap the raw stream. The
+        bridged span is at least the window's main lobe and grows outward
+        from the centre bin for as long as bins stay > 6 dB above the local
+        floor (the residual DC wanders over several bins at fine RBW), up to
+        a cap. (Through 1.6.x this was a per-block complex-mean subtraction
+        before the FFT, which removed anything slower than one block.)"""
+        n = len(arr)
+        c = n // 2                       # fftshift order: DC sits at n//2
+        h = self._DC_HALF_WIDTH.get(self._window_name, 4)
+        # Widest bridge, bins each side: a B210's LO hump at 16 MS/s is ~15 kHz
+        # wide at +6 dB (61 bins at 65536 points, measured 2026-11-04), so the
+        # cap scales with the FFT up to 256 bins; never more than 1/16 of
+        # the span, so a wide real signal on the tuning survives.
+        cap = min(256, n // 16, max(8 * h, 32, n // 128))
+        if c - cap - 65 < 0 or c + cap + 65 >= n:  # tiny FFT: fixed width only
+            cap = h
+        lo, hi = c - h, c + h            # inclusive bin range to bridge
+        if cap > h:
+            ref = np.concatenate((arr[c - cap - 64: c - cap], arr[c + cap + 1: c + cap + 65]))
+            thresh = float(np.median(ref)) * self._DC_SPIKE_RATIO
+            while lo - 1 >= c - cap and arr[lo - 1] > thresh:
+                lo -= 1
+            while hi + 1 <= c + cap and arr[hi + 1] > thresh:
+                hi += 1
+        if lo - 1 < 0 or hi + 1 >= n:
+            return arr
+        out = np.array(arr, dtype=np.float64, copy=True)
+        out[lo:hi + 1] = np.linspace(arr[lo - 1], arr[hi + 1], hi - lo + 3)[1:-1]
+        return out
+
     def _tick(self):
         n = self._fft_size
-        t_start = time.perf_counter()
-        chunks, dropped = self._sink.drain()
-        self._last_dropped = dropped
-        pk = mnm = None
-        if chunks:
-            # Welch path: every chunk splits into whole FFT blocks (each
-            # FFT_SIZES entry divides CHUNK_SIZE), all averaged in linear
-            # power into ONE low-variance frame for this tick.
-            blocks = np.concatenate(chunks).reshape(-1, n)
-            # Proactive budget: cap the block count BEFORE the math using
-            # the learned per-block cost, so even a 96-chunk backlog cannot
-            # stall the GUI thread.
-            budget = self._timer.interval() * 1e-3 * self._tick_budget_frac
-            cap = max(1, int(budget / max(self._sec_per_block, 1e-9)))
-            stride = -(-blocks.shape[0] // cap)          # ceil division
-            if stride > 1:
-                blocks = blocks[::stride]
-            self._stride = stride
-            if self._dc_suppress:
-                # Zero-IF radios (HackRF, RTL-SDR, …) put a DC-offset /
-                # LO-leakage spike in the center bin. Per-block complex-mean
-                # subtraction, display-only: the recorders tap the raw stream.
-                blocks = blocks - blocks.mean(axis=1, keepdims=True)
-            spec = scipy_fft.fft(blocks * self._window32, axis=1, workers=-1)
-            pblocks = np.abs(spec) ** 2                  # per-block power, float32
-            # Mean over blocks accumulates in float64 (single-precision
-            # transform, double-precision accumulate).
-            power = np.fft.fftshift(np.mean(pblocks, axis=0, dtype=np.float64))
-            # In 'peak' detector mode the holds see every FFT block, so a
-            # burst shorter than a tick registers at full amplitude instead
-            # of being diluted by the tick mean. In 'average' mode pk/mnm
-            # stay None and the holds track the per-tick Welch mean below.
-            if self._max_on and self._hold_peak:
-                pk = np.fft.fftshift(pblocks.max(axis=0)).astype(np.float64)
-            if self._min_on and self._hold_peak:
-                mnm = np.fft.fftshift(pblocks.min(axis=0)).astype(np.float64)
-            nblk = blocks.shape[0]
-            self._last_blocks_used = nblk
-            elapsed = time.perf_counter() - t_start
-            self._sec_per_block = (0.7 * self._sec_per_block
-                                   + 0.3 * elapsed / max(1, nblk))
-        else:
-            # Fallback (flowgraph just started/stalled, or drain blanked
-            # after a retune flush): legacy single-frame snapshot; returns
-            # without painting if latest() was invalidated by the flush.
-            samples = self._sink.latest(n)
-            if samples is None:
-                return
-            if self._dc_suppress:
-                samples = samples - samples.mean()
-            spec = np.fft.fftshift(np.fft.fft(samples * self._window))
-            power = np.abs(spec) ** 2
-            self._last_blocks_used = 1
+        psum, pk, mnm, nblk = self._acc.take()
+        if nblk <= 0 or len(psum) != n:
+            # Nothing new (source stalled, flowgraph reconfiguring, or the
+            # one-take blank after a retune): keep the last frame on screen.
+            return
+        self._last_blocks_used = int(nblk)
+        # Mean over every FFT block the chain produced since the last tick.
+        # fft_vcc(shift=True) already delivers bins low -> high frequency.
+        power = psum / float(nblk)
+        # In 'peak' detector mode the accumulator tracked per-block extremes,
+        # so a burst shorter than a tick registers at full amplitude instead
+        # of being diluted by the tick mean. In 'average' mode pk/mnm are
+        # None and the holds track the per-tick mean below.
+        if pk is not None:
+            pk = np.asarray(pk, dtype=np.float64)
+        if mnm is not None:
+            mnm = np.asarray(mnm, dtype=np.float64)
+        if self._dc_suppress:
+            power = self._bridge_dc(power)
+            if pk is not None:
+                pk = self._bridge_dc(pk)
+            if mnm is not None:
+                mnm = self._bridge_dc(mnm)
         # Base scale is dBFS: |X|² / (Σw)²  →  a full-scale tone reads 0 dBFS.
         scale = self._wsum * self._wsum
         power = power / scale
@@ -1304,8 +1369,10 @@ class FftPlotWidget(QtWidgets.QWidget):
         self._dc_check = QtWidgets.QCheckBox("Remove DC spike")
         self._dc_check.setToolTip(
             "Suppress the center-frequency spike from a zero-IF radio's DC offset "
-            "/ LO leakage (HackRF, RTL-SDR, …) by subtracting the DC component "
-            "before the FFT. Affects the display only — recordings stay raw.")
+            "/ LO leakage (HackRF, RTL-SDR, B210…): the bins around the tuned "
+            "centre that sit more than 3 dB above the local floor are bridged "
+            "with a straight line (up to 1/16 of the span). Affects the display "
+            "only — recordings stay raw.")
         self._dc_check.toggled.connect(self.request_dc_suppress.emit)
         self._dc_check.toggled.connect(
             lambda on: self.control_changed.emit('dc_suppress', on))
@@ -3087,10 +3154,14 @@ finishes.</li>
 <p>A built-in test of the <i>entire</i> pulsar chain — SDR, channelizer,
 filterbank writer, timebase, PRESTO fold, verdict — with no test equipment
 at all. The B210's own transmitter plays a synthetic pulsar (100 ms period,
-DM 50, noise-carrier pulses with real cold-plasma dispersion) at
-<b>minimum TX gain</b> on 420 MHz, far from the protected hydrogen-line
-band; the receiver records the B210's internal TX→RX leakage — no cable or
-attenuator needed. After the capture (default 90 s) the app folds the
+DM 50, noise-carrier pulses with real cold-plasma dispersion) on 420 MHz,
+far from the protected hydrogen-line band; the receiver records the B210's
+internal TX→RX leakage — no cable or attenuator needed. The test first
+<b>measures that leakage path</b> with a tone and raises the TX gain in
+10 dB steps (0–40 dB, microwatts into an open connector) only until the
+tone stands 30 dB above the receiver floor; the level it achieved is in the
+result. If even 40 dB falls short the result says so, and a loopback cable
+from TX/RX-A to RX2-A through a 30 dB pad gives a full-strength test. After the capture (default 90 s) the app folds the
 recording at the injected period and DM and grades PASS/FAIL: the period
 must come back exact, the DM near 50 (a DM stuck at 0 means dispersion was
 lost), and the significance high. Your tuning, sample rate, gain, and
@@ -3347,8 +3418,11 @@ install; Windows: WSL via <code>presto/build_presto.sh</code>).</li>
 briefly can't drain samples (an RX overflow — the 'O' characters in the
 sidebar), the dropped stretch would silently shorten the file's sample
 clock and smear a later pulsar fold. The recorder measures each gap from
-the radio's own timestamps and inserts the exact number of zero samples,
-so the <code>.fil</code> timebase keeps tracking real time. The REC counter
+the radio's own timestamps and inserts zeros for exactly the missing time
+(to the nearest spectrum — the channelizer runs in the flowgraph since 1.7,
+so padding is in whole rows of one <i>tsamp</i>; every gap is measured
+against the recording's original time reference, so rounding never
+accumulates), and the <code>.fil</code> timebase keeps tracking real time. The REC counter
 shows any gaps live (e.g. <i>2 gaps, 45&nbsp;ms padded</i>) and a
 <code>.gaps.json</code> file with the details is written next to the
 recording. Non-UHD radios (HackRF, RTL-SDR, SDRplay) don't provide
@@ -3357,16 +3431,40 @@ means a clean timebase.</li>
 </ul>
 
 <h3>Spectrum (top plot)</h3>
-<p>Live FFT magnitude in dB. Use the control panel on the right side to
-adjust:</p>
+<p>Live FFT magnitude in dB. The FFT itself runs inside the GNU Radio
+flowgraph (compiled blocks, since 1.7), so <i>every</i> sample the radio
+delivers is integrated into the trace at any sample rate, whether or not a
+recording is running — the display's statistics never change when you press
+Record, and the window stays responsive on small computers (the Raspberry
+Pi, an older laptop). Use the control panel to adjust:</p>
 <ul>
-<li><b>FFT Size</b>: 256–8192. Larger = finer frequency resolution but
-slower response and more averaging-window flicker.</li>
+<li><b>FFT Size</b>: 256–65536. Larger = finer frequency resolution (RBW =
+sample rate / size) and a lower per-bin noise floor, but slower response.
+Changing it rebuilds the display chain — a brief pause, nothing else.</li>
 <li><b>Window</b>: Blackman-Harris is the default — low sidelobes, good
 for RFI hunting. Hann/Hamming have narrower main lobes; Rectangular has
 the sharpest peak but the worst sidelobes.</li>
-<li><b>Avg α</b>: exponential averaging. 1.0 = no smoothing (every frame
-is a fresh measurement). Smaller = more smoothing.</li>
+<li><b>Avg α</b>: exponential averaging across display updates (each update
+is already the mean of every FFT block since the previous one). 1.0 = no
+smoothing (every frame is a fresh measurement). Smaller = more smoothing;
+the ≈N readout is the effective number of frames averaged. For watching a
+weak line (the hydrogen line is a few tenths of a dB on a small dish) use
+≈0.02–0.05 with <b>Baseline: Flatten</b> below.</li>
+<li><b>DC suppress</b>: hides the zero-IF DC / LO-leakage spike that HackRF,
+RTL-SDR and similar radios put at the tuned centre by bridging the window's
+main lobe around the centre bin with its neighbours. Display only — the
+recorders always get the raw stream.</li>
+<li><b>Baseline</b>: removes the receiver's bandpass shape so a weak line
+stands up from a flat floor near 0&nbsp;dB. <i>Off</i>: raw spectrum.
+<i>Reference (ON/OFF)</i>: point at empty sky, click <b>Store reference
+(OFF)</b>, then
+point at the source — the plot shows the difference. <i>Flatten (median)</i>:
+subtracts a wide running-median estimate of the bandpass in real time with no
+reference needed; set <b>Flatten width</b> several times wider than the
+feature you want to keep (a 1&nbsp;MHz hydrogen profile at 8&nbsp;MS/s and
+4096 points is ~500 bins, so ~1501 bins). Either mode auto-fits the Y axis
+to the flattened trace. This plus a low Avg α is the "watch the line" view;
+the ezRA drift-scan recording is unaffected by any of it.</li>
 <li><b>Max / Min hold</b>: overlay traces showing the highest/lowest value
 ever seen at each bin. Use <b>Reset</b> to clear. The <b>Detector</b> combo
 picks what they accumulate. <i>Peak (per FFT)</i>: the extreme of every FFT
@@ -5591,10 +5689,24 @@ class PulsarPlannerDialog(QtWidgets.QDialog):
 # === B210 built-in self test (Observe menu) ===
 #
 # Bench-proven parameters (2026-08-05, s/n 8003886): internal TX->RX leakage
-# at MINIMUM TX gain carries the test — no cable, no pad. 420 MHz keeps the
-# transmission far from the protected 1420 MHz band. The 11.2 ms dispersion
-# sweep against 2 ms pulses gives prepfold real DM leverage (+/-4.5); the
-# first bench run recovered DM 51.45 of 50 injected at chi2 1118.
+# carries the test — no cable, no pad. 420 MHz keeps the transmission far
+# from the protected 1420 MHz band. The 11.2 ms dispersion sweep against
+# 2 ms pulses gives prepfold real DM leverage (+/-4.5); the first bench run
+# recovered DM 51.45 of 50 injected at chi2 1118.
+#
+# TX level (1.7): in August the leakage at MINIMUM TX gain was enough
+# because the B210's side-A switch sat half open (4.9 dB isolation, the
+# 09-14 anomaly). On 2026-11-05 both lab units isolated normally and the
+# same test folded to noise (chi2 2-7, DM wandering; the pulse train sat
+# ~27 dB under the noise per bin). So the test now MEASURES the injection
+# path first — a CW tone at +fs/8 through the live display chain — and
+# raises the TX gain in steps only as far as needed for the tone to stand
+# SELFTEST_INJECT_TARGET_DB above the RX floor (referred to a 4096-point
+# FFT; ~+30 dB is what the August path gave). The cap is a few microwatts
+# into an open SMA: nothing measurable leaves the enclosure at 40 dB
+# either, and the hydrogen-line band is never used by the standard test.
+SELFTEST_INJECT_TARGET_DB = 30.0
+SELFTEST_TX_GAIN_STEPS_DB = (0.0, 10.0, 20.0, 30.0, 40.0)
 SELFTEST_FREQ_HZ = 420e6
 SELFTEST_RATE_HZ = 2e6
 SELFTEST_PERIOD_S = 0.1
@@ -5624,7 +5736,8 @@ class B210SelfTestDialog(QtWidgets.QDialog):
 
         intro = QtWidgets.QLabel(
             "Transmits a synthetic dispersed pulsar from this B210's own TX "
-            "at <b>minimum gain</b> and records it off the internal TX→RX "
+            "at the <b>lowest gain that gives a usable signal</b> (measured "
+            "first; 0–40 dB) and records it off the internal TX→RX "
             "leakage — <b>no cable needed</b>. The recording is folded with "
             "PRESTO and graded against the injected truth, proving the whole "
             "chain — SDR, channelizer, writer, timebase, PRESTO — before "
@@ -5685,8 +5798,9 @@ class B210SelfTestDialog(QtWidgets.QDialog):
 
         self._freq_spin = _dspin(70.0, 6000.0, SELFTEST_FREQ_HZ / 1e6, 4,
                                  " MHz", "Any B210 frequency, 70–6000 MHz. "
-                                 "TX stays at minimum gain, so even the "
-                                 "protected 1420 MHz band is safe — nothing "
+                                 "TX gain is measured in and capped at 40 dB "
+                                 "(microwatts into an open connector), so even "
+                                 "the protected 1420 MHz band is safe — nothing "
                                  "measurable leaves the enclosure.")
         g.addWidget(QtWidgets.QLabel("Frequency:"), 0, 0)
         g.addWidget(self._freq_spin, 0, 1)
@@ -5755,11 +5869,14 @@ class B210SelfTestDialog(QtWidgets.QDialog):
             "more to accumulate pulses.")
         self._dur_spin.valueChanged.connect(self._update_consequences)
         g.addWidget(self._dur_spin, 4, 1)
-        txnote = QtWidgets.QLabel("TX gain: locked at minimum")
+        txnote = QtWidgets.QLabel("TX gain: measured, 0–40 dB")
         txnote.setStyleSheet("color: gray;")
         txnote.setToolTip(
-            "The roadmap rule: never radiate next to the dish. Internal "
-            "leakage at minimum gain is all the test needs.")
+            "The test measures its own injection path first (a CW tone "
+            "through the internal TX→RX leakage) and raises the TX gain in "
+            "10 dB steps only as far as needed for a usable signal, capped "
+            "at 40 dB — microwatts into an open connector. The achieved "
+            "level is reported with the result.")
         g.addWidget(txnote, 4, 2, 1, 2)
         lay.addWidget(self._grid_box)
 
@@ -5991,9 +6108,9 @@ class B210SelfTestDialog(QtWidgets.QDialog):
         self._status.setStyleSheet(self._STYLE_QUIET)
         self._explain.setText(
             "The TX is looping the dispersed pulse train out of TX/RX-A at "
-            "minimum gain; RX2-A is recording the internal leakage straight "
-            "into a filterbank .fil — watch the spectrum display and you "
-            "can see the pulses.")
+            "the gain the injection probe chose; RX2-A is recording the "
+            "internal leakage straight into a filterbank .fil — watch the "
+            "spectrum display and you can see the pulses.")
         self._explain.setVisible(True)
         self._results.setVisible(False)
         self._pdf_btn.setVisible(False)
@@ -7182,16 +7299,21 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._rx_group_layout.addWidget(self._device_button)
 
         # --- Spectrum display (replaces qtgui freq_sink + waterfall_sink) ---
-        # stream_to_vector groups samples into CHUNK_SIZE vectors so the pure-
-        # Python sink sees whole vectors (sample-by-sample can't keep up).
-        # keep_one_in_n only engages above ~26 MS/s (see _decim_for): at the
-        # rates we use, EVERY sample reaches the sink and the display
-        # Welch-averages the full stream (v1.1.7 sensitivity fix).
-        self._sample_sink = SampleBufferSink(chunk_size=CHUNK_SIZE)
-        self._stream_to_vec = blocks.stream_to_vector(gr.sizeof_gr_complex, CHUNK_SIZE)
-        self._keep_one_in_n = blocks.keep_one_in_n(
-            gr.sizeof_gr_complex * CHUNK_SIZE,
-            self._decim_for(samp_rate))
+        # The display FFT is a compiled chain inside the flowgraph
+        # (DisplayChannelizer); keep_one_in_n only engages above
+        # DISPLAY_FULL_COVERAGE_RATE, so at the rates we use EVERY sample is
+        # integrated into the trace, recording or not (1.7). Build it at the
+        # saved FFT size / window so the settings push below is a no-op
+        # instead of a flowgraph relock.
+        _sp = self._app_settings
+        _fft0 = _sp.get_int('spectrum', 'fft_size')
+        if _fft0 not in FFT_SIZES:
+            _fft0 = 1024
+        _win0 = _sp.get_str('spectrum', 'window')
+        if _win0 not in WINDOWS:
+            _win0 = "blackman-harris"
+        self._display = DisplayChannelizer(
+            _fft0, WINDOWS[_win0](_fft0), decim=display_decim_for(samp_rate))
         self._fft_plot = FftPlotWidget(center_freq, samp_rate)
         self._fft_plot.set_y_axis(-140, 10)
         self._fft_plot.set_frequency_range(center_freq, samp_rate)
@@ -7202,7 +7324,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._waterfall_plot.link_x_to(self._fft_plot)
 
         self._processor = SpectrumProcessor(
-            self._sample_sink, fft_size=1024, window_name="blackman-harris",
+            self._display, window_name=_win0,
             update_hz=10.0, gain_db=float(self.gain), parent=self)
         self._processor.frame_ready.connect(self._fft_plot.on_frame)
         self._processor.frame_ready.connect(self._waterfall_plot.on_frame)
@@ -7283,7 +7405,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             self._mode_group.setToolTip("Sweep is disabled in playback mode.")
         else:
             self._on_mode_changed('sweep' if self._sweep_enabled else 'live')
-        self._fft_plot.request_fft_size.connect(self._processor.set_fft_size)
+        self._fft_plot.request_fft_size.connect(self._on_display_fft_size)
         self._fft_plot.request_window.connect(self._processor.set_window)
         self._fft_plot.request_average.connect(self._processor.set_average_alpha)
         self._fft_plot.request_max_hold.connect(self._processor.set_max_hold)
@@ -7418,17 +7540,14 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         ##################################################
         # Connections
         ##################################################
-        # Display branch: source -> chunk -> decimate -> Python sink. The
-        # source differs between live (USRP) and playback (file → throttle →
-        # rotator for digital retuning).
+        # Display branch: source -> DisplayChannelizer (compiled FFT chain ->
+        # accumulator). The source differs between live (USRP) and playback
+        # (file → throttle → rotator for digital retuning).
         if self._playback_mode:
             self.connect((self._file_source, 0), (self._throttle, 0))
             self.connect((self._throttle, 0), (self._rotator, 0))
-            self.connect((self._rotator, 0), (self._stream_to_vec, 0))
-        else:
-            self.connect((self.uhd_usrp_source_0, 0), (self._stream_to_vec, 0))
-        self.connect((self._stream_to_vec, 0), (self._keep_one_in_n, 0))
-        self.connect((self._keep_one_in_n, 0), (self._sample_sink, 0))
+        self.connect((self._display_upstream(), 0), (self._display.head, 0))
+        self._display.connect_chain(self)
 
         # Push the saved spectrum + waterfall + UI settings into the widgets
         # now that everything exists. Top-level values (tuning, gain, samp,
@@ -7445,17 +7564,34 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         # publishes one.
         self._setup_update_checker()
 
-    @staticmethod
-    def _decim_for(samp_rate, target_vec_per_sec=400):
-        """Pick keep_one_in_n's N so the Python sink sees ~target vectors/sec.
+    def _display_upstream(self):
+        """The block that feeds the display chain: the rotator in playback
+        (digital retuning of the file), else the radio source."""
+        return self._rotator if self._playback_mode else self.uhd_usrp_source_0
 
-        v1.1.7 sensitivity fix: 400 vec/s x 65536 samples ≈ 26 MS/s of
-        throughput, so N=1 (nothing dropped) at every rate the B210 pulsar
-        band uses; the display integrator then Welch-averages the WHOLE
-        stream instead of a 0.3% snapshot (Ray's weak-signal report). The
-        vector copies cost ~150 MB/s of memcpy at 20 MS/s — cheap; the FFT
-        cost is bounded separately by the integrator's adaptive stride."""
-        return max(1, int(round(samp_rate / CHUNK_SIZE / float(target_vec_per_sec))))
+    @Slot(int)
+    def _on_display_fft_size(self, n):
+        """FFT-size change = swap the compiled display chain for one built at
+        the new size, under top_block lock/unlock (the recording sinks splice
+        the same way), then point the processor at it. Same size: no-op, so
+        the settings push at startup never relocks."""
+        n = int(n)
+        if n not in FFT_SIZES or n == self._display.fft_size:
+            return
+        new = DisplayChannelizer(
+            n, WINDOWS[self._processor.window_name](n), decim=self._display.decim)
+        up = self._display_upstream()
+        old = self._display
+        self.lock()
+        try:
+            self.disconnect((up, 0), (old.head, 0))
+            old.disconnect_chain(self)
+            self.connect((up, 0), (new.head, 0))
+            new.connect_chain(self)
+        finally:
+            self.unlock()
+        self._display = new
+        self._processor.attach(new)
 
     def _apply_playback_ui(self):
         """Disable the controls that have no meaning for a recorded file
@@ -7927,9 +8063,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         selftest_act = QtGui.QAction("B210 &Self Test…", self)
         selftest_act.setToolTip(
             "Transmit a synthetic dispersed pulsar from the B210's own TX "
-            "at minimum gain, record the internal leakage, fold it with "
-            "PRESTO, and grade PASS/FAIL — proves the whole chain with no "
-            "cable before telescope time is spent")
+            "(gain measured in, 0–40 dB), record the internal leakage, fold "
+            "it with PRESTO, and grade PASS/FAIL — proves the whole chain "
+            "with no cable before telescope time is spent")
         selftest_act.triggered.connect(self._show_selftest_dialog)
         obs_menu.addAction(selftest_act)
         obs_menu.addSeparator()
@@ -8786,7 +8922,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._fft_plot.set_frequency_range(self.center_freq, self.samp_rate)
         self._waterfall_plot.set_frequency_range(self.center_freq, self.samp_rate)
         self._processor.reset_averaging()   # RBW/axis changed — start a fresh average
-        self._keep_one_in_n.set_n(self._decim_for(self.samp_rate))
+        self._display.set_decim(display_decim_for(self.samp_rate))
         self._save_setting('rx', 'samp_rate_hz', float(self.samp_rate))
         # Stale overflow indicators from the old rate aren't meaningful any
         # more, and there's usually a small burst during retuning.
@@ -9141,7 +9277,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         path = str(ezra_txt.ezra_unique_path(self.recording_dir,
                                              self._ez_prefix))
         try:
-            sink = ezra_txt.EzraTxtSink(
+            # 1.7: the channelizer is a compiled chain spliced into the
+            # flowgraph (EzraChain); Python only sums partial rows and writes.
+            sink = ezra_txt.EzraChain(
                 path, fft_bins=self._ez_fft_bins,
                 integ_frames=self._ez_integ_frames,
                 samp_rate=self.samp_rate,
@@ -9168,7 +9306,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         try:
             self.lock()
             try:
-                self.connect((self.uhd_usrp_source_0, 0), (sink, 0))
+                sink.connect(self, self.uhd_usrp_source_0)
             finally:
                 self.unlock()
         except Exception as exc:
@@ -9188,7 +9326,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         row_s = self._ez_fft_bins * self._ez_integ_frames / self.samp_rate
         self._recording_status.setText(
             f"Recording → {os.path.basename(path)} "
-            f"({sink._integ.kept_bins} bins, {row_s:.1f} s/row)")
+            f"({sink.kept_bins} bins, {row_s:.1f} s/row)")
         self._recording_status.setToolTip(path)
         self._on_recording_started()
 
@@ -9201,7 +9339,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         try:
             self.lock()
             try:
-                self.disconnect((self.uhd_usrp_source_0, 0), (sink, 0))
+                sink.disconnect(self, self.uhd_usrp_source_0)
             finally:
                 self.unlock()
         except Exception as exc:
@@ -9242,7 +9380,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                 == self._source_name.strip()):
             _raj, _dej = self._catalog_radec
         try:
-            sink = sigproc_fil.FilterbankSink(
+            # 1.7: the channelizer is a compiled chain spliced into the
+            # flowgraph (FilterbankChain); Python only writes finished rows.
+            sink = sigproc_fil.FilterbankChain(
                 path, nchans=self._fil_nchans, samp_rate=self.samp_rate,
                 center_freq_mhz=self.center_freq / 1e6,
                 tstart_mjd=sigproc_fil.unix_to_mjd(time.time()),
@@ -9263,7 +9403,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         try:
             self.lock()
             try:
-                self.connect((self.uhd_usrp_source_0, 0), (sink, 0))
+                sink.connect(self, self.uhd_usrp_source_0)
             finally:
                 self.unlock()
         except Exception as exc:
@@ -9451,7 +9591,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
     # The dialog (B210SelfTestDialog) is the UI; these methods do the
     # flowgraph surgery: save the user's radio state, retune to the bench-
     # proven test geometry, splice a TX branch (vector_source -> usrp_sink
-    # on the SAME B210, minimum gain) plus a private FilterbankSink, record,
+    # on the SAME B210, gain measured in) plus a private FilterbankChain, record,
     # tear down, restore, then fold with PRESTO and grade against the
     # injected ground truth. Bench-proven 2026-08-05: internal TX->RX
     # leakage suffices — no cable.
@@ -9571,13 +9711,14 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             tx.set_samp_rate(float(self.samp_rate))
             tx.set_center_freq(float(self.center_freq), 0)
             tx.set_antenna("TX/RX", 0)
-            tx.set_gain(0.0, 0)     # MINIMUM — the roadmap protected-band rule
+            tx.set_gain(0.0, 0)     # start at minimum; the probe below raises
+                                    # it only as far as the leakage path needs
 
             outdir = os.path.join(self.recording_dir, "self_test")
             os.makedirs(outdir, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = os.path.join(outdir, f"{params['source_name']}_{ts}.fil")
-            sink = sigproc_fil.FilterbankSink(
+            sink = sigproc_fil.FilterbankChain(
                 path, nchans=params["nchans"],
                 samp_rate=float(self.samp_rate),
                 center_freq_mhz=float(self.center_freq) / 1e6,
@@ -9590,10 +9731,19 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             # its own period check from exactly that (2026-08-05).
             vec.set_min_output_buffer(1 << 22)
 
+            # Measure the injection path and pick the TX gain (1.7). The
+            # tone source stays spliced until the pulse train replaces it
+            # in the same relock below.
+            level_db, tx_gain, tone_vec = self._selftest_set_injection(dialog, tx)
+            self._selftest_inject = (level_db, tx_gain)
+            self._selftest_tone = tone_vec
+
             self.lock()
             try:
+                self.disconnect(tone_vec, tx)
+                self._selftest_tone = None
                 self.connect(vec, tx)
-                self.connect((self.uhd_usrp_source_0, 0), (sink, 0))
+                sink.connect(self, self.uhd_usrp_source_0)
             finally:
                 self.unlock()
             # Same host-stall hygiene a real recording gets (GC confinement
@@ -9601,6 +9751,17 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             self._begin_realtime_mode()
         except Exception as exc:
             self._selftest_active = False
+            tone_vec = getattr(self, '_selftest_tone', None)
+            if tone_vec is not None and tx is not None:
+                try:
+                    self.lock()
+                    try:
+                        self.disconnect(tone_vec, tx)
+                    finally:
+                        self.unlock()
+                except Exception:
+                    pass
+                self._selftest_tone = None
             if sink is not None:
                 try:
                     sink.close()
@@ -9616,6 +9777,77 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._selftest_source_name = params["source_name"]
         self._selftest_info = None
         return None
+
+    def _selftest_wait(self, seconds):
+        """Block the GUI thread for `seconds` while keeping the event loop
+        (dialog progress text, the flowgraph's Qt signals) alive."""
+        end = time.monotonic() + float(seconds)
+        while time.monotonic() < end:
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.02)
+
+    def _selftest_measure_tone(self):
+        """One reading from the live display chain: the +fs/8 tone's power
+        over the local floor, in dB referred to a 4096-point FFT (the
+        tone is narrowband, so the ratio grows 3 dB per doubling of the
+        FFT; the reference makes the number comparable across sizes).
+        None if nothing arrived."""
+        acc = self._display.accumulator
+        acc.flush()
+        self._selftest_wait(0.25)
+        acc.take()                        # the one-take blank after flush
+        self._selftest_wait(0.6)
+        psum, _, _, nblk = acc.take()
+        if nblk <= 0:
+            return None
+        p = psum / float(nblk)
+        n = len(p)
+        c0, kb = n // 2, n // 8
+        if kb < 8 or c0 + kb + 8 >= n:
+            return None
+        tone_p = float(p[c0 + kb - 2: c0 + kb + 3].max())
+        ref = np.r_[p[c0 + 8: c0 + kb - 8], p[c0 + kb + 8: n - 8]]
+        floor_p = float(np.median(ref)) if ref.size else 1e-30
+        return 10.0 * np.log10(tone_p / max(floor_p, 1e-30)) - 10.0 * np.log10(n / 4096.0)
+
+    def _selftest_set_injection(self, dialog, tx):
+        """Splice a CW tone (+fs/8, the test amplitude) into the TX, then
+        raise the TX gain through SELFTEST_TX_GAIN_STEPS_DB until the tone
+        stands SELFTEST_INJECT_TARGET_DB above the RX floor, or the last
+        step. Returns (level_db, tx_gain_db, tone_source) with the tone
+        STILL spliced — the caller swaps it for the pulse train in one
+        relock. The display timer pauses during the readings so nothing
+        competes for the accumulator; the display resumes after."""
+        t = np.arange(1 << 16)
+        tone = (SELFTEST_AMP * np.exp(2j * np.pi * t / 8.0)).astype(np.complex64)
+        tone_vec = blocks.vector_source_c(tone.tolist(), True)
+        tone_vec.set_min_output_buffer(1 << 20)
+        self.lock()
+        try:
+            self.connect(tone_vec, tx)
+        finally:
+            self.unlock()
+        timer = self._processor._timer
+        timer.stop()
+        level, used = -99.0, 0.0
+        try:
+            for g in SELFTEST_TX_GAIN_STEPS_DB:
+                tx.set_gain(float(g), 0)
+                used = float(g)
+                self._selftest_wait(0.3)          # gain settle
+                got = self._selftest_measure_tone()
+                if got is None:
+                    continue
+                level = got
+                dialog.on_progress(
+                    f"Injection path: tone {level:+.1f} dB above the RX floor "
+                    f"at TX gain {g:.0f} dB (target {SELFTEST_INJECT_TARGET_DB:+.0f} dB)…")
+                if level >= SELFTEST_INJECT_TARGET_DB:
+                    break
+        finally:
+            self._display.accumulator.flush()
+            timer.start()
+        return level, used, tone_vec
 
     def _selftest_gap_events(self):
         sink = getattr(self, '_selftest_sink', None)
@@ -9637,7 +9869,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                     if vec is not None and tx is not None:
                         self.disconnect(vec, tx)
                     if sink is not None:
-                        self.disconnect((self.uhd_usrp_source_0, 0), (sink, 0))
+                        sink.disconnect(self, self.uhd_usrp_source_0)
                 finally:
                     self.unlock()
             except Exception as exc:
@@ -9685,11 +9917,30 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
     def _selftest_finish_capture(self, dialog):
         """Capture over: tear down, restore the radio, then fold on a worker
         thread and grade against the injected truth."""
+        gaps = self._selftest_gap_events()      # read before the sink goes
         self._selftest_teardown()
         spec = self._selftest_spec
         path = self._selftest_path
         srcname = getattr(self, '_selftest_source_name',
                           SELFTEST_SOURCE_NAME)
+        # The report carries the injected truth and the measured injection
+        # path: a per-unit fact (serial logged) that a future reader of the
+        # PDF cannot reconstruct (Rick, 2026-11-05).
+        level, txg = getattr(self, '_selftest_inject', (None, None))
+        notes = ["## Self test",
+                 f"B210 serial {self._device_serial}; injected {spec.describe()}"]
+        if level is not None:
+            short = level < SELFTEST_INJECT_TARGET_DB
+            notes.append(
+                f"Injection path (internal TX/RX-A -> RX2-A leakage): tone "
+                f"{level:+.1f} dB above the RX floor (4096-point FFT) at TX gain "
+                f"{txg:.0f} dB (target {SELFTEST_INJECT_TARGET_DB:+.0f} dB, cap "
+                f"{max(SELFTEST_TX_GAIN_STEPS_DB):.0f} dB)"
+                + ("; BELOW target even at the cap - a weak fold is expected; "
+                   "a loopback cable through a 30 dB pad gives a full-strength "
+                   "test" if short else ""))
+        notes.append(f"Capture: {gaps} RX overflow gap event(s)"
+                     + (" (zero-padded, timebase intact)" if gaps else ""))
 
         sig = self._AnalysisSignals()
         sig.progress.connect(dialog.on_progress)
@@ -9703,7 +9954,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                 res = fold_analysis.analyze_fil(
                     path, source_name=srcname,
                     fold_p_s=spec.period_s, fold_dm=spec.dm,
-                    progress=sig.progress.emit)
+                    progress=sig.progress.emit, extra_notes=notes)
                 sig.done.emit(res)
             except Exception as exc:
                 sig.failed.emit(str(exc))
@@ -9723,7 +9974,17 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         import pulsar_sim
         self._selftest_active = False
         ok, checks = pulsar_sim.grade(self._selftest_spec, res)
-        checks = ["Injected: " + self._selftest_spec.describe(), ""] + checks
+        level, txg = getattr(self, '_selftest_inject', (None, None))
+        inj = []
+        if level is not None:
+            short = level < SELFTEST_INJECT_TARGET_DB
+            inj = [f"Injection: tone {level:+.1f} dB above the RX floor (4096-pt) "
+                   f"at TX gain {txg:.0f} dB"
+                   + (f" — BELOW the {SELFTEST_INJECT_TARGET_DB:+.0f} dB target even at "
+                      f"the {max(SELFTEST_TX_GAIN_STEPS_DB):.0f} dB cap: a weak fold is "
+                      f"expected; for a full-strength test loop TX/RX-A to RX2-A "
+                      f"through a 30 dB pad" if short else "")]
+        checks = ["Injected: " + self._selftest_spec.describe()] + inj + [""] + checks
         pdf = res.get('pdf', '')
         self._recording_status.setText(
             "Self test " + ("PASS" if ok else "FAIL"))
@@ -9752,7 +10013,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         try:
             self.lock()
             try:
-                self.disconnect((self.uhd_usrp_source_0, 0), (sink, 0))
+                sink.disconnect(self, self.uhd_usrp_source_0)
             finally:
                 self.unlock()
         except Exception as exc:
@@ -10252,7 +10513,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         import gc
         self.stop()
         self.wait()
-        self.disconnect((self.uhd_usrp_source_0, 0), (self._stream_to_vec, 0))
+        self.disconnect((self.uhd_usrp_source_0, 0), (self._display.head, 0))
         # Release the old device handle fully (the B210 is exclusive-access)
         # before opening it again on the new frontend.
         self._source = None
@@ -10264,7 +10525,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             center_freq=self.center_freq, gain=self.gain, antenna=name)
         self._source = new
         self.uhd_usrp_source_0 = new.block
-        self.connect((self.uhd_usrp_source_0, 0), (self._stream_to_vec, 0))
+        self.connect((self.uhd_usrp_source_0, 0), (self._display.head, 0))
         self.start()
         self._overflow_widget.clear()
 
@@ -10350,8 +10611,38 @@ def _set_macos_app_name(name):
         pass
 
 
+class _SafeStream:
+    """Console stream wrapper whose writes never raise. A console handle can
+    refuse writes (OSError [WinError 1] 'Incorrect function' from print(),
+    seen in a PowerShell session 2026-11-04); the exception then surfaced
+    inside whichever callback was printing — a tune, a slider — and cut it
+    short. Diagnostics are best-effort; the program's work is not."""
+
+    def __init__(self, stream):
+        self._s = stream
+
+    def write(self, data):
+        try:
+            return self._s.write(data)
+        except Exception:
+            return len(data) if data is not None else 0
+
+    def flush(self):
+        try:
+            self._s.flush()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
 def main(top_block_cls=dses_workbench, options=None):
 
+    for _name in ("stdout", "stderr"):
+        _stream = getattr(sys, _name, None)
+        if _stream is not None and not isinstance(_stream, _SafeStream):
+            setattr(sys, _name, _SafeStream(_stream))
     # macOS: make the application menu read the app name instead of "python".
     # Must precede QApplication (which builds the native menu bar).
     _set_macos_app_name(APP_NAME)

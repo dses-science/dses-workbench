@@ -23,6 +23,12 @@ cannot see oscillator error between source and receiver -- the recovered
 period is exact by construction. That leg belongs to the E4438C precision
 source (see ROADMAP "Validation tooling").
 
+NOTE (2026-11-05): the in-app Self Test now measures the injection path
+first (tools/b210_leakage_probe.py does the same standalone) and raises the
+TX gain in 10 dB steps to 40 dB until the tone stands 30 dB above the RX
+floor; this harness takes an explicit --tx-gain (default 0, the August
+assumption, which no longer injects a usable signal on either lab unit).
+
 Usage (from the project root, .conda env):
     python tools/b210_bit.py                     # 90 s leakage-path test
     python tools/b210_bit.py --duration 180 --amp 0.5

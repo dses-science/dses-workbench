@@ -111,8 +111,19 @@ def find_b200_uhd():
 # ---------------------------------------------------------------------------------------
 # the verified LO-offset tune
 # ---------------------------------------------------------------------------------------
+def _safe_log(s: str) -> None:
+    """stderr print that can never take a tune down with it: a console whose
+    handle refuses writes raises OSError [WinError 1] from print() (seen
+    2026-11-04 in Rick's PowerShell session), and an exception out of the
+    log call used to skip the classic fallback re-tune that followed it."""
+    try:
+        print(s, file=sys.stderr)
+    except Exception:
+        pass
+
+
 def tune_with_lo_offset(block, center_hz: float, offset_hz: float, chan: int = 0,
-                        log: Callable[[str], None] = lambda s: print(s, file=sys.stderr)) -> bool:
+                        log: Callable[[str], None] = _safe_log) -> bool:
     """Tune a usrp_source or usrp_sink to center_hz with the LO parked offset_hz away
     (the DSP shifts the band back). VERIFIED, not trusted: some UHD builds honor the
     MANUAL rf policy but never apply the AUTO dsp compensation (the Pi's radioconda
@@ -131,6 +142,11 @@ def tune_with_lo_offset(block, center_hz: float, offset_hz: float, chan: int = 0
         dsp = None
     if dsp is not None and abs(abs(dsp) - abs(offset_hz)) < 1.0:
         return True
+    def _say(msg):
+        try:
+            log(msg)
+        except Exception:
+            pass                 # a broken console must never alter the tune
     for sign in (-1.0, 1.0):
         try:
             req = uhd.tune_request()
@@ -140,15 +156,17 @@ def tune_with_lo_offset(block, center_hz: float, offset_hz: float, chan: int = 0
             req.dsp_freq = sign * offset_hz
             r2 = block.set_center_freq(req, chan)
             if abs(abs(float(r2.actual_dsp_freq)) - abs(offset_hz)) < 1.0:
-                log(f"B210 LO offset: UHD dsp AUTO compensation absent; "
-                    f"using MANUAL dsp {sign * offset_hz:+.0f} Hz")
+                _say(f"B210 LO offset: UHD dsp AUTO compensation absent; "
+                     f"using MANUAL dsp {sign * offset_hz:+.0f} Hz")
                 return True
         except Exception as exc:
-            log(f"B210 manual-dsp tune failed: {exc}")
+            _say(f"B210 manual-dsp tune failed: {exc}")
             break
-    log("B210 LO offset could not be applied faithfully on this UHD; "
-        "falling back to classic tuning.")
+    # Re-tune FIRST, then say so: the radio must never be left on the failed
+    # offset attempt because the message could not be written.
     block.set_center_freq(center_hz, chan)
+    _say("B210 LO offset could not be applied faithfully on this UHD; "
+         "falling back to classic tuning.")
     return False
 
 
