@@ -2830,6 +2830,15 @@ def resolve_device(saved_driver, saved_serial, parent=None):
     chooses, pre-selecting the saved (driver, serial) from settings.
     `saved_driver` and `saved_serial` come from settings."""
     devices = find_all_radios()
+    # A radio can be momentarily "not there": the SDRplay API service
+    # releases a device a few seconds after the previous process exits, so
+    # a quick relaunch saw no radio and fell into playback (RSP1B,
+    # 2026-11-05). Look twice more before concluding.
+    for _ in range(2):
+        if devices:
+            break
+        time.sleep(2.0)
+        devices = find_all_radios()
 
     if not devices:
         sample = find_default_sample_path()

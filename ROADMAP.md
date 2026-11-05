@@ -106,7 +106,14 @@ SDR Console V3.3, in all respects, even while recording.
       (Ray's span), carrier at 1420.496 MHz (within half a 9.8 kHz bin),
       display 9 fps at 100% coverage; the window smoke (FFT swaps, DC
       toggle, 8 s .fil at 10 MS/s / 2048 ch = 39,072 rows) passes on the
-      Soapy path. The low-cost-SDR check before the cut is DONE.
+      Soapy path. SDRplay RSP1B the same afternoon: probe returns its full
+      list (62.5 kS/s-10 MS/s), preset -> 1422.000 MHz at 8 MS/s, header
+      1418.8-1425.2 (Ray's exactly), carrier at 1420.5000 MHz (0.00 kHz —
+      TCXO), display full coverage, smoke + 8 s .fil at 10 MS/s PASS; the
+      only wrinkle: the SDRplay API service releases a device a few seconds
+      after the previous process exits, so an immediate restart saw "no
+      radio" and fell to playback once (startup now retries, see below).
+      The low-cost-SDR check before the cut is DONE on two radios.
 - [x] **Help**: Spectrum section explains the chain, Avg α guidance for a
       weak line, new DC-suppress and Baseline (Off / Reference / Flatten)
       bullets — the Baseline group had no Help at all; timebase bullet
