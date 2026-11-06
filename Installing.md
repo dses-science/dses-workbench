@@ -1,6 +1,6 @@
 # DSES Radio Astronomy Workbench — Installation Guide
 
-**Version 1.6.1**
+**Version 1.7.0**
 Author: Richard M Hambly (K0GD) — k0gd@cnssys.com
 License: GPL-3.0-or-later
 
@@ -150,16 +150,16 @@ Accept the prompt; conda downloads and installs the three packages. If the launc
 
 Download the application from the distribution site. You can either use the direct links below, or browse the folder <https://gpstime.com/sw_distribution/dses-workbench/> and pick the newest `dses-workbench-*.zip`:
 
-- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.6.1.zip>
+- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.7.0.zip>
 - **This guide (PDF):** <https://gpstime.com/sw_distribution/dses-workbench/DSES_Radio_Astronomy_Workbench_Installation.pdf>
 
 The zip is roughly 60 MB — it includes a short sample recording so the program can run in playback mode when no radio is attached. (Replace the version number in the link if a later release has been published.)
 
-**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.6.1`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
+**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.7.0`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
 
 ### 3.1 Windows 11
 
-1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.6.1 fixed that.) The extracted folder is named for the version, `dses-workbench-1.6.1\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.7.0 fixed that.) The extracted folder is named for the version, `dses-workbench-1.7.0\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
@@ -178,8 +178,8 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
    ```bash
    mkdir -p ~/Applications && cd ~/Applications
-   unzip ~/Downloads/dses-workbench-1.6.1.zip
-   mv dses-workbench-1.6.1 dses-workbench
+   unzip ~/Downloads/dses-workbench-1.7.0.zip
+   mv dses-workbench-1.7.0 dses-workbench
    cd dses-workbench
    chmod +x launcher.sh
    ```
@@ -209,8 +209,8 @@ The steps are the same as Linux. Extract it into your personal **`~/Applications
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-unzip ~/Downloads/dses-workbench-1.6.1.zip
-mv dses-workbench-1.6.1 dses-workbench
+unzip ~/Downloads/dses-workbench-1.7.0.zip
+mv dses-workbench-1.7.0 dses-workbench
 cd dses-workbench
 chmod +x launcher.sh
 ./launcher.sh
@@ -604,7 +604,7 @@ Answers "what can I record right now?" from the ATNF catalog: every pulsar above
 
 #### Observe menu — B210 Self Test
 
-A built-in test of the *entire* pulsar chain — SDR, channelizer, filterbank writer, timebase, PRESTO fold, verdict — with no test equipment at all. The B210's own transmitter plays a synthetic pulsar (100 ms period, DM 50, noise-carrier pulses with real cold-plasma dispersion) at **minimum TX gain** on 420 MHz, far from the protected hydrogen-line band; the receiver records the B210's internal TX→RX leakage — no cable or attenuator needed. After the capture (default 90 s) the app folds the recording at the injected period and DM and grades PASS/FAIL: the period must come back exact, the DM near 50 (a DM stuck at 0 means dispersion was lost), and the significance high. Your tuning, sample rate, gain, and antenna are saved before the test and restored right after the capture, while the fold runs. Run it before packing for a field session: a PASS means a real pulsar that reaches the feed will survive the pipeline. Requires a USRP B200/B210 and an installed PRESTO. The recording and its fold PDF land in a `self_test` folder inside your recordings folder.
+A built-in test of the *entire* pulsar chain — SDR, channelizer, filterbank writer, timebase, PRESTO fold, verdict — with no test equipment at all. The B210's own transmitter plays a synthetic pulsar (100 ms period, DM 50, noise-carrier pulses with real cold-plasma dispersion) on 420 MHz, far from the protected hydrogen-line band; the receiver records the B210's internal TX→RX leakage — no cable or attenuator needed. The test first **measures that leakage path** with a tone and raises the TX gain in 10 dB steps (0–40 dB, microwatts into an open connector) only until the tone stands 30 dB above the receiver floor; the level it achieved is in the result. If even 40 dB falls short the result says so, and a loopback cable from TX/RX-A to RX2-A through a 30 dB pad gives a full-strength test. After the capture (default 90 s) the app folds the recording at the injected period and DM and grades PASS/FAIL: the period must come back exact, the DM near 50 (a DM stuck at 0 means dispersion was lost), and the significance high. Your tuning, sample rate, gain, and antenna are saved before the test and restored right after the capture, while the fold runs. Run it before packing for a field session: a PASS means a real pulsar that reaches the feed will survive the pipeline. Requires a USRP B200/B210 and an installed PRESTO. The recording and its fold PDF land in a `self_test` folder inside your recordings folder.
 
 Beyond the standard test, two advanced modes make it a general pulsar *simulator*: **Simulate a catalog pulsar** picks any source from the ATNF catalog (magnetars included) and injects its exact catalog period and DM, and **Custom** opens every parameter — frequency (any B210 frequency, 70–6000 MHz), sample rate, period, DM, duty cycle, amplitude, RX gain, channels, and capture length. A live readout translates the chosen geometry into what matters: the dispersion sweep across the band and the DM resolution it can honestly support, pulse width vs sample time, and pulses per capture — narrow bands at high frequency constrain DM weakly, and the readout says so before you spend the time. After picking a catalog source, **Suggest geometry** goes further and solves for settings that can actually measure that source's DM, filling them in for you (it knows the internal leakage weakens at low frequency and that the duplex transmitter holds its timing best at or below 2 MS/s). TX gain is always locked at minimum: the internal leakage is all the test needs, so even the protected 1420 MHz band is safe.
 
@@ -664,7 +664,7 @@ Sweep runs continuously, redrawing the wide trace after each pass; the waterfall
 
 #### RX
 
-- **Sample Rate**: per-radio, up to the hardware's true maximum (e.g. B210: 0.625–61.44 MHz — 56 MHz analog bandwidth; SDRPlay: 2–10 MHz; RTL-SDR: 0.25–3.2 MHz). The presets are not arbitrary: each divides the radio's master clock evenly, so decimation stays on the flat half-band filter chain. Rates that don't divide the clock cleanly can fall back to CIC filtering, whose passband droop shows up as a bowl-shaped gain error across the spectrum — poison for calibrated radio astronomy. Higher rate = wider spectrum but more disk and host load when recording: the radio isn't the only limit. USB bandwidth and host CPU set a practical ceiling — if the overflow panel or a recording's gap counter climbs at a high rate, the host can't keep up; step down. (16 MHz .fil recording is the validated DSES pulsar geometry.)
+- **Sample Rate**: per-radio, up to the hardware's true maximum (e.g. B210: 0.625–61.44 MHz — 56 MHz analog bandwidth; SDRPlay: 2–10 MHz; RTL-SDR: 0.25–3.2 MHz). The presets are not arbitrary: each divides the radio's master clock evenly, so decimation stays on the flat half-band filter chain. Rates that don't divide the clock cleanly can fall back to CIC filtering, whose passband droop shows up as a bowl-shaped gain error across the spectrum — poison for calibrated radio astronomy. Higher rate = wider spectrum but more disk and host load when recording: the radio isn't the only limit. USB bandwidth and host CPU set a practical ceiling — if the overflow panel or a recording's gap counter climbs at a high rate, the host can't keep up; step down. (16 MHz .fil recording is the validated DSES pulsar geometry.) PlutoSDR-class radios (ADALM-Pluto, ANTSDR, the HamGeek E310) talk over USB 2.0 and report no overflows: above about 6 MS/s the stream silently loses samples, so the program offers them 6 MS/s at most, and a rate change on them briefly stops and restarts the stream (their driver rebuilds its buffer for the new rate).
 
 - **Manual Rate (Hz)**: type any rate the SDR supports — useful for real-pulsar capture geometries that aren't in the preset list. The value is clamped to the device's reported min/max (hover for the range) and the radio snaps to the nearest rate it can actually deliver, which is then shown back. Accepts engineering notation (e.g. `24M`, `625k`). The combo clears when the active rate isn't one of the presets.
 
@@ -680,11 +680,11 @@ Sweep runs continuously, redrawing the wide trace after each pass; the waterfall
 
 - **Source**: optional source / pulsar name (e.g. `B0329+54`). When set it is folded into the recording filename and written into the SIGPROC `.fil` header (`source_name`, plus RA/Dec derived from the name) and the SigMF description, so PRESTO/prepfold pick it up. Blank gives a timestamp-only filename. Locked while recording.
 
-- **Format**: *Raw I/Q (SigMF)* writes full-rate complex samples to a SigMF `.sigmf-meta`/`.sigmf-data` pair — exact, but large (e.g. ~192 MB/s at 24 Msps). *Filterbank (.fil)* channelizes the stream live and writes a SIGPROC filterbank (`telescope_id 12`) straight to disk, so the giant raw I/Q is never stored. The `.fil` is what PRESTO folds; it is produced by the same validated code as the offline `iq_to_fil.py` converter. *Drift scan (ezRA .txt)* writes integrated spectra (one row every ~10&ndash;15 s with the default geometry) in the ezRA data format, so the file feeds Ted Cline's free ezRA suite (ezCon &rarr; ezPlot/ezSky/ezGal) directly &mdash; hydrogen-line drift scans with the same radio that records pulsars. The filename follows the ezCol convention (`<prefix>YYMMDD_HH.txt`).
+- **Format**: *Raw I/Q (SigMF)* writes full-rate complex samples to a SigMF `.sigmf-meta`/`.sigmf-data` pair — exact, but large (e.g. ~192 MB/s at 24 Msps). *Filterbank (.fil)* channelizes the stream live and writes a SIGPROC filterbank (`telescope_id 12`) straight to disk, so the giant raw I/Q is never stored. The `.fil` is what PRESTO folds; it is produced by the same validated code as the offline `iq_to_fil.py` converter. *Drift scan (ezRA .txt)* writes integrated spectra (one row every ~10–15 s with the default geometry) in the ezRA data format, so the file feeds Ted Cline's free ezRA suite (ezCon → ezPlot/ezSky/ezGal) directly — hydrogen-line drift scans with the same radio that records pulsars. The filename follows the ezCol convention (`<prefix>YYMMDD_HH.txt`), and — also like ezCol — a multi-day recording rolls to a **new file at each UTC midnight** (one file per UTC day, each with a full header), so ezCon consumes a long campaign as its usual series of daily files.
 
-- **Channels** / **Integrate** (filterbank only): the FFT channel count and how many power frames are summed per output sample, so `tsamp = channels &times; integrate / sample rate`. Locked while recording.
+- **Channels** / **Integrate** (filterbank only): the FFT channel count and how many power frames are summed per output sample, so `tsamp = channels × integrate / sample rate`. Locked while recording.
 
-- **Az / El** (drift scan only): the dish pointing written into the ezRA file header (`azDeg`/`elDeg`). The observing-site identity (latitude, longitude, altitude, name) comes from the `[site]` section of the settings file &mdash; defaults are the DSES Haswell 60-ft dish. FFT bins, integration count, and the band-edge trim follow the dish's proven ezCol geometry and are adjustable via `[recording]` `ez_*` settings.
+- **Az / El** (drift scan only): the dish pointing written into the ezRA file header (`azDeg`/`elDeg`). The observing-site identity (latitude, longitude, altitude, name) comes from the `[site]` section of the settings file — defaults are the DSES Haswell 60-ft dish. FFT bins, integration count, and the band-edge trim follow the dish's proven ezCol geometry and are adjustable via `[recording]` `ez_*` settings.
 
 - **Record for**: optional fixed length — minutes (e.g. `30`) or `H:MM` / `HH:MM:SS` (e.g. `1:30`). The recording auto-stops when it is reached and the counter shows a countdown; blank records until you stop it. Locked while recording.
 
@@ -694,17 +694,21 @@ Sweep runs continuously, redrawing the wide trace after each pass; the waterfall
 
 - **Analyze when done** / **Quick look** (filterbank + PRESTO): when a `.fil` recording stops, the canned PRESTO pipeline runs automatically — `readfile` sanity, an `rfifind` RFI mask, band-edge zapping, and a `prepfold` fold — by catalog pulsar when Source is a known designation (the **Fold P (ms)** / **Fold DM** boxes then preview its catalogue values and lock, and the fold uses the pulsar's full ephemeris), or at a manual **Fold P (ms)** for a source with no catalogue entry (e.g. the lab pulsar simulator) — and delivers a **self-contained PDF** next to the recording: chart, commands, numbers, and a plain-language verdict. Verdicts are honest about failure modes: a periodicity that optimizes to DM ≈ 0 is reported as a *terrestrial signal*, not a detection, and "no detection" explicitly does not mean a bad recording. **Quick look** does the same on a snapshot of the still-growing file mid-recording, without interrupting it. Requires PRESTO (Mac/Linux: native install; Windows: WSL via `presto/build_presto.sh`).
 
-- **Timebase integrity** (filterbank, USRP/UHD radios): if the host briefly can't drain samples (an RX overflow — the 'O' characters in the sidebar), the dropped stretch would silently shorten the file's sample clock and smear a later pulsar fold. The recorder measures each gap from the radio's own timestamps and inserts the exact number of zero samples, so the `.fil` timebase keeps tracking real time. The REC counter shows any gaps live (e.g. *2 gaps, 45 ms padded*) and a `.gaps.json` file with the details is written next to the recording. Non-UHD radios (HackRF, RTL-SDR, SDRplay) don't provide per-gap timestamps; for them, watch the Overflow panel — a clean panel means a clean timebase.
+- **Timebase integrity** (filterbank, USRP/UHD radios): if the host briefly can't drain samples (an RX overflow — the 'O' characters in the sidebar), the dropped stretch would silently shorten the file's sample clock and smear a later pulsar fold. The recorder measures each gap from the radio's own timestamps and inserts zeros for exactly the missing time (to the nearest spectrum — the channelizer runs in the flowgraph since 1.7, so padding is in whole rows of one *tsamp*; every gap is measured against the recording's original time reference, so rounding never accumulates), and the `.fil` timebase keeps tracking real time. The REC counter shows any gaps live (e.g. *2 gaps, 45 ms padded*) and a `.gaps.json` file with the details is written next to the recording. Non-UHD radios (HackRF, RTL-SDR, SDRplay) don't provide per-gap timestamps; for them, watch the Overflow panel — a clean panel means a clean timebase.
 
 ### Spectrum (top plot)
 
-Live FFT magnitude in dB. Use the control panel on the right side to adjust:
+Live FFT magnitude in dB. The FFT itself runs inside the GNU Radio flowgraph (compiled blocks, since 1.7), so *every* sample the radio delivers is integrated into the trace at any sample rate, whether or not a recording is running — the display's statistics never change when you press Record, and the window stays responsive on small computers (the Raspberry Pi, an older laptop). Use the control panel to adjust:
 
-- **FFT Size**: 256–8192. Larger = finer frequency resolution but slower response and more averaging-window flicker.
+- **FFT Size**: 256–65536. Larger = finer frequency resolution (RBW = sample rate / size) and a lower per-bin noise floor, but slower response. Changing it rebuilds the display chain — a brief pause, nothing else.
 
 - **Window**: Blackman-Harris is the default — low sidelobes, good for RFI hunting. Hann/Hamming have narrower main lobes; Rectangular has the sharpest peak but the worst sidelobes.
 
-- **Avg α**: exponential averaging. 1.0 = no smoothing (every frame is a fresh measurement). Smaller = more smoothing.
+- **Avg α**: exponential averaging across display updates (each update is already the mean of every FFT block since the previous one). 1.0 = no smoothing (every frame is a fresh measurement). Smaller = more smoothing; the ≈N readout is the effective number of frames averaged. For watching a weak line (the hydrogen line is a few tenths of a dB on a small dish) use ≈0.02–0.05 with **Baseline: Flatten** below.
+
+- **DC suppress**: hides the zero-IF DC / LO-leakage spike that HackRF, RTL-SDR and similar radios put at the tuned centre by bridging the window's main lobe around the centre bin with its neighbours. Display only — the recorders always get the raw stream.
+
+- **Baseline**: removes the receiver's bandpass shape so a weak line stands up from a flat floor near 0 dB. *Off*: raw spectrum. *Reference (ON/OFF)*: point at empty sky, click **Store reference (OFF)**, then point at the source — the plot shows the difference. *Flatten (median)*: subtracts a wide running-median estimate of the bandpass in real time with no reference needed; set **Flatten width** several times wider than the feature you want to keep (a 1 MHz hydrogen profile at 8 MS/s and 4096 points is ~500 bins, so ~1501 bins). Either mode auto-fits the Y axis to the flattened trace. This plus a low Avg α is the "watch the line" view; the ezRA drift-scan recording is unaffected by any of it.
 
 - **Max / Min hold**: overlay traces showing the highest/lowest value ever seen at each bin. Use **Reset** to clear. The **Detector** combo picks what they accumulate. *Peak (per FFT)*: the extreme of every FFT block — even a sub-millisecond burst registers at full amplitude, making Max hold a true transient-RFI catcher; on pure noise the Max trace settles ~10 dB above the average and the Min trace keeps sinking (the statistics of extremes over many samples — not a malfunction), so Min hold reveals what is *always* present: steady carriers stand up out of the collapsing noise floor. *Average (per frame)*: extremes of each display update's deep average — both holds stay within a few dB of the baseline, useful for tracking slow drifts.
 

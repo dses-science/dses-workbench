@@ -12,9 +12,12 @@ PDF is built, unless you pass --docx to keep it. PDF conversion uses
 LibreOffice on macOS/Linux and Microsoft Word on Windows (see
 convert_docx_to_pdf). On Windows the PDF is printed through a PDF printer
 driver, never Word's own exporter (it rasterizes the house fonts): Acrobat
-Distiller first (named font subsets), with an automatic, bounded fallback
-to 'Microsoft Print to PDF' when Acrobat's font-capture helper crashes or
-the print stalls; DSES_PDF_ENGINE=msprint|distiller|pdfmaker forces one.
+Distiller (named font subsets), and only Distiller. The attempt is bounded
+(a crashed font-capture helper is killed, the job cancelled) and when it
+fails the build STOPS with the diagnosis — it never falls through to
+another engine (Rick, 5-Nov-2026: "Instead of a fall through you should
+alert me to fix it"). DSES_PDF_ENGINE=msprint|pdfmaker is an explicit
+opt-in for a one-off; msprint output is not release quality.
 The build must never stop on a dialog: see _word_app / _DialogSentinel.
 
 Handles the Markdown subset used in Installing.md:
@@ -1745,11 +1748,12 @@ def _pdf_engine():
     """Which Windows PDF engine to use: the DSES_PDF_ENGINE environment
     variable, one of distiller | msprint | pdfmaker | auto (default).
 
-    auto = distiller when the 'Adobe PDF' printer and acrodist.exe are
-    installed, else msprint. The Distiller attempt is BOUNDED and falls back
-    to msprint by itself (see _print_to_adobe_pdf), so the daily output —
-    named MinionPro/MyriadPro subsets — is produced whenever Acrobat
-    cooperates, and the build never waits on a human when it does not.
+    auto = distiller. The Distiller attempt is BOUNDED (see
+    _print_to_adobe_pdf) and when it fails the build raises with the
+    diagnosis instead of printing through another engine: the daily output
+    is named MinionPro/MyriadPro subsets or nothing, and a broken printer
+    setup is reported to the person who can fix it. auto only degrades to
+    msprint on a machine with no 'Adobe PDF' printer / acrodist.exe at all.
 
     History (27-Sep-2026): the Adobe PDF driver and the PDFMaker add-in
     both launch Acrobat.exe for "font capture" when a document uses a glyph
@@ -1758,7 +1762,10 @@ def _pdf_engine():
     Error" box (0xc06d007e) that only a human click dismissed — Distiller
     sat on it, PDFMaker hung Word on it — and 1.6.0 was cut with msprint
     as the default. Rick: "Distiller first with the fallback"; the bounded
-    attempt replaced that the same evening."""
+    attempt replaced that the same evening. (5-Nov-2026): the 1.7.0 build
+    fell through to msprint because the Adobe PDF printer's "Rely on system
+    fonts only" option had been ticked again; Rick: "Instead of a fall
+    through you should alert me to fix it" — the fallback is gone."""
     name = (os.environ.get("DSES_PDF_ENGINE") or "auto").strip().lower()
     if name not in PDF_ENGINES:
         raise RuntimeError(f"DSES_PDF_ENGINE={name!r}: expected one of "
@@ -2039,28 +2046,34 @@ def _convert_docx_to_pdf_word_locked(docx_path: Path, pdf_path: Path):
                     except TargetLocked:
                         raise           # the PDF is open elsewhere; no fallback helps
                     except Exception as exc:
-                        print("NOTE: the Distiller route failed "
-                              f"({type(exc).__name__}: {exc}).\n"
-                              "  Known causes: Acrobat.exe crashing in font "
-                              "capture (the 'Font Capture: Windows - "
-                              "Application Error' box), or the Adobe PDF "
-                              "printer option\n  'Rely on system fonts only; "
-                              "do not use document fonts' ticked again. "
-                              "Falling back to 'Microsoft Print to PDF' "
-                              "(fonts embedded, text selectable).",
-                              file=sys.stderr)
+                        # No fallback (Rick, 5-Nov-2026): a failed Distiller
+                        # route is a printer-setup fault for a human to fix,
+                        # not a reason to ship a different engine's output.
                         _dismiss_adobe_pdf_dialog()
-                        used = f"msprint (Distiller route failed: {exc})"
-                        _print_to_ms_pdf(word, doc, pdf_path)
+                        raise RuntimeError(
+                            "PDF BUILD STOPPED: the Distiller route failed "
+                            f"({type(exc).__name__}: {exc}).\n"
+                            "  Fix the printer, then rebuild. Known causes:\n"
+                            "  - the Adobe PDF printer option 'Rely on system "
+                            "fonts only; do not use document fonts' is ticked "
+                            "again (an 'Adobe PDF' dialog, then Word's "
+                            "\"can't print due to a problem with the printer "
+                            "setup\"): Printers > Adobe PDF > Printing "
+                            "preferences > Adobe PDF Settings > untick it;\n"
+                            "  - Acrobat.exe crashing in font capture (the "
+                            "'Font Capture: Windows - Application Error' box).\n"
+                            "  No PDF was written by another engine; "
+                            "DSES_PDF_ENGINE=msprint is an explicit opt-in "
+                            "for a one-off and is not release quality."
+                        ) from exc
                 elif engine == "pdfmaker":
                     try:
                         _export_via_pdfmaker(word, doc, pdf_path)
                     except Exception as exc:
-                        print("WARNING: the PDFMaker route failed "
-                              f"({type(exc).__name__}: {exc}). Falling back "
-                              "to 'Microsoft Print to PDF'.", file=sys.stderr)
-                        used = "msprint (PDFMaker route failed)"
-                        _print_to_ms_pdf(word, doc, pdf_path)
+                        raise RuntimeError(
+                            "PDF BUILD STOPPED: the PDFMaker route failed "
+                            f"({type(exc).__name__}: {exc}); no other engine "
+                            "was used.") from exc
                 else:
                     _print_to_ms_pdf(word, doc, pdf_path)
         finally:
