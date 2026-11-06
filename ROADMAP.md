@@ -6,7 +6,7 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
-## v1.7.0 — ON MAIN, NOT CUT (landed 2026-11-04, Windows session; Rick: "Yes, both")
+## v1.7.0 — SHIPPED 2026-11-05 (cut + published from Windows, release commit adf24a8, tag v1.7.0; landed 2026-11-04, Rick: "Yes, both"; cut on Rick: "Do it all now")
 
 Feature release (second digit). The display and the pulsar recorder move
 their FFTs into the flowgraph (GNU Radio compiled blocks); Python only ever
