@@ -126,6 +126,28 @@ SDR Console V3.3, in all respects, even while recording.
       of the silent >26 MS/s decimation, and the question to Ray — which
       program he compares against, and a screenshot of his settings.
 
+- [x] **Pluto-class radios (SoapyPlutoSDR): no rate change under a live
+      stream, and a 6 MS/s link ceiling** (2026-11-05, HamGeek E310 running
+      the ANTSDR Pluto firmware, radioconda). The Hydrogen preset's retune +
+      rate change back to back raced the driver's libiio buffer recreate
+      against the flowgraph's readStream: libiio -138, "Unable to create
+      buffer!", source thread dead, and the board refused every new buffer
+      until rebooted (a 2.5 s pause between the two steps survived, so a
+      race). `SOAPY_RATE_CHANGE_RESTARTS = ('plutosdr',)`: for those drivers
+      `set_samp_rate` stops the flowgraph, waits, sets the rate on the idle
+      device and restarts (the antenna-rebuild pattern; ~1.3 s per preset).
+      The USB 2.0 link silently drops samples above ~6 MS/s (measured: 99%
+      delivered to 6, 90% at 8, 72% at 10; 16 hung the board; the driver
+      reports no overflows) — fatal for the .fil timebase, invisible in ezRA
+      rows — so `SOAPY_DEFAULTS['plutosdr']` carries `max_rate` 6e6 and the
+      source clips the probed list, the range and the opening rate to it.
+      Result: HI preset 1422.000 at 6 MS/s (header 1419.6–1424.4), ezRA rows,
+      display 9.2 fps at full coverage, live smoke PASS. Unwedge a Pluto that
+      died mid-stream: `reset = 1` in its config.txt + eject the drive.
+      Open on the E310 itself: its 1 GbE port never answered, the second RX
+      channel needs the IIO path, the picker label shows "(no serial)" (the
+      Soapy find result has no serial key; hw_serial is in the probe).
+
 ## v1.6.1 — SHIPPED 2026-10-04 (cut + published from Windows, release commit 8d44a06, tag v1.6.1; Rick: "Fix the launcher and cut 1.6.1")
 
 Bug-fix release (third digit); the program itself is unchanged from 1.6.0.

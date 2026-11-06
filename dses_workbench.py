@@ -3325,7 +3325,11 @@ spectrum but more disk and host load when recording: the radio isn't the
 only limit. USB bandwidth and host CPU set a practical ceiling — if the
 overflow panel or a recording's gap counter climbs at a high rate, the host
 can't keep up; step down. (16 MHz .fil recording is the validated DSES
-pulsar geometry.)</li>
+pulsar geometry.) PlutoSDR-class radios (ADALM-Pluto, ANTSDR, the HamGeek
+E310) talk over USB 2.0 and report no overflows: above about 6 MS/s the
+stream silently loses samples, so the program offers them 6 MS/s at most,
+and a rate change on them briefly stops and restarts the stream (their
+driver rebuilds its buffer for the new rate).</li>
 <li><b>Manual Rate (Hz)</b>: type any rate the SDR supports — useful for
 real-pulsar capture geometries that aren't in the preset list. The value is
 clamped to the device's reported min/max (hover for the range) and the radio
@@ -4179,11 +4183,32 @@ SOAPY_DEFAULTS = {
         'product':   "LimeSDR",
     },
     'plutosdr': {
-        'samp_rates': [0.6e6, 1e6, 2e6, 4e6, 5e6, 8e6, 10e6, 20e6, 30.72e6, 61.44e6],
+        'samp_rates': [0.6e6, 1e6, 2e6, 4e6, 5e6, 6e6],
         'gain':      (0.0, 73.0, 1.0),
         'product':   "PlutoSDR",
+        # The AD936x can clock 61.44 MS/s but SoapyPlutoSDR talks to the
+        # board over USB 2.0 and reports NO overflows: above the link's
+        # ceiling the stream just silently loses samples. Measured
+        # 2026-11-05 (HamGeek E310 / ANTSDR firmware, CF32, 3 s per rate):
+        # 2-6 MS/s 99%, 8 MS/s 90%, 10 MS/s 72% delivered; 16 MS/s hung the
+        # board. A lossy stream breaks the .fil timebase and ezRA
+        # integrations without any gap record, so the app caps the offered
+        # rates here; the probed list and the range are clipped the same.
+        'max_rate':  6e6,
     },
 }
+
+# Drivers whose sample-rate change must NOT happen under a live stream.
+# SoapyPlutoSDR tears down and recreates its libiio buffer inside
+# setSampleRate; with the flowgraph thread blocked in readStream on the same
+# USB pipe the recreate times out (libiio -138, "Unable to create buffer!"),
+# the source thread dies, and the board then refuses every new buffer until
+# it is rebooted. Reproduced 2026-11-05 on the HamGeek E310 (ANTSDR Pluto
+# firmware) by the Hydrogen preset's retune + rate change back to back; a
+# 2.5 s pause between the two survived — a race, not a rule. For these
+# drivers the app stops the flowgraph (threads joined, stream closed), sets
+# the rate on the idle device, and restarts it with a fresh buffer.
+SOAPY_RATE_CHANGE_RESTARTS = ('plutosdr',)
 
 
 # --- Observation presets: validated parameter bundles keyed by observing
@@ -4291,6 +4316,9 @@ class SoapyGenericSource(RadioSource):
         # See SOAPY_DEFAULTS — some drivers (SDRplay) expose set_gain as
         # *gain reduction*, so we map the slider value through (max - x).
         self._invert_gain = bool(defaults.get('invert_gain', False))
+        # See SOAPY_RATE_CHANGE_RESTARTS: the app's set_samp_rate restarts
+        # the flowgraph around the rate change for these drivers.
+        self.rate_change_restarts_flowgraph = driver in SOAPY_RATE_CHANGE_RESTARTS
         # Build the SoapySDR device-address string. driver= is required;
         # serial= disambiguates when multiple devices of the same driver
         # are attached.
@@ -4301,6 +4329,13 @@ class SoapyGenericSource(RadioSource):
         probed = _soapy_probe_rates(dev_args)
         if probed:
             self.samp_rate_options = probed
+        # Per-driver link ceiling (see SOAPY_DEFAULTS['plutosdr']): keep
+        # only the rates the transport delivers in full.
+        self._max_rate = float(defaults.get('max_rate', 0.0) or 0.0)
+        if self._max_rate > 0:
+            kept = [r for r in self.samp_rate_options if r <= self._max_rate + 1.0]
+            self.samp_rate_options = kept or [self._max_rate]
+            samp_rate = min(float(samp_rate), self._max_rate)
         # gr-soapy source signature is positional:
         #   soapy.source(device, type, nchan, dev_args='', stream_args='',
         #                tune_args=[''], other_settings=[''])
@@ -4407,7 +4442,10 @@ class SoapyGenericSource(RadioSource):
                 mins.append(float(mn))
                 maxs.append(float(mx))
             if mins and maxs and max(maxs) > min(mins) > 0:
-                return (min(mins), max(maxs))
+                hi = max(maxs)
+                if getattr(self, '_max_rate', 0.0) > 0:
+                    hi = min(hi, self._max_rate)    # link ceiling, see __init__
+                return (min(mins), hi)
         except Exception:
             pass
         return RadioSource.samp_rate_range(self)
@@ -8949,7 +8987,19 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             return  # rate is fixed by the playback file
         lo, hi = self._samp_rate_limits()
         req = max(lo, min(hi, float(samp_rate)))
-        self._source.set_samp_rate(req)
+        if (getattr(self._source, 'rate_change_restarts_flowgraph', False)
+                and self.flowgraph_started.is_set()):
+            # Pluto-class drivers rebuild their stream buffer on a rate
+            # change; under a live readStream that races and kills the
+            # stream (SOAPY_RATE_CHANGE_RESTARTS). Same stop/wait/start
+            # cycle the antenna rebuild uses: a brief gap, nothing lost
+            # that a rate change did not already discard.
+            self.stop()
+            self.wait()
+            self._source.set_samp_rate(req)
+            self.start()
+        else:
+            self._source.set_samp_rate(req)
         # Trust the rate the radio actually settled on (drivers snap), so the
         # display, decimation, and .fil tsamp all reflect reality.
         actual = self._source.get_actual_samp_rate()
