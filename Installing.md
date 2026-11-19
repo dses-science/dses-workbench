@@ -1,6 +1,6 @@
 # DSES Radio Astronomy Workbench — Installation Guide
 
-**Version 1.8.0**
+**Version 1.8.1**
 Author: Richard M Hambly (K0GD) — k0gd@cnssys.com
 License: GPL-3.0-or-later
 
@@ -150,16 +150,16 @@ Accept the prompt; conda downloads and installs the three packages. If the launc
 
 Download the application from the distribution site. You can either use the direct links below, or browse the folder <https://gpstime.com/sw_distribution/dses-workbench/> and pick the newest `dses-workbench-*.zip`:
 
-- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.8.0.zip>
+- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.8.1.zip>
 - **This guide (PDF):** <https://gpstime.com/sw_distribution/dses-workbench/DSES_Radio_Astronomy_Workbench_Installation.pdf>
 
 The zip is roughly 60 MB — it includes a short sample recording so the program can run in playback mode when no radio is attached. (Replace the version number in the link if a later release has been published.)
 
-**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.8.0`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
+**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.8.1`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
 
 ### 3.1 Windows 11
 
-1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.8.0 fixed that.) The extracted folder is named for the version, `dses-workbench-1.8.0\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.8.1 fixed that.) The extracted folder is named for the version, `dses-workbench-1.8.1\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
@@ -178,8 +178,8 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
    ```bash
    mkdir -p ~/Applications && cd ~/Applications
-   unzip ~/Downloads/dses-workbench-1.8.0.zip
-   mv dses-workbench-1.8.0 dses-workbench
+   unzip ~/Downloads/dses-workbench-1.8.1.zip
+   mv dses-workbench-1.8.1 dses-workbench
    cd dses-workbench
    chmod +x launcher.sh
    ```
@@ -209,8 +209,8 @@ The steps are the same as Linux. Extract it into your personal **`~/Applications
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-unzip ~/Downloads/dses-workbench-1.8.0.zip
-mv dses-workbench-1.8.0 dses-workbench
+unzip ~/Downloads/dses-workbench-1.8.1.zip
+mv dses-workbench-1.8.1 dses-workbench
 cd dses-workbench
 chmod +x launcher.sh
 ./launcher.sh
@@ -668,7 +668,7 @@ Sweep runs continuously, redrawing the wide trace after each pass; the waterfall
 
 - **Manual Rate (Hz)**: type any rate the SDR supports — useful for real-pulsar capture geometries that aren't in the preset list. The value is clamped to the device's reported min/max (hover for the range) and the radio snaps to the nearest rate it can actually deliver, which is then shown back. Accepts engineering notation (e.g. `24M`, `625k`). The combo clears when the active rate isn't one of the presets.
 
-- **RX Gain**: per-radio range and meaning. The slider's min/max matches what the driver reports (e.g. B210: 0–76 dB on the AD9361 gain table; SDRPlay: 0–48 dB, internally inverted so higher = stronger signal; RTL-SDR: 0–49.6 dB). AGC, if the driver defaults it on, is disabled at startup so the slider always takes effect.
+- **RX Gain**: per-radio range and meaning. The slider's min/max matches what the driver reports (e.g. B210: 0–76 dB on the AD9361 gain table; SDRPlay: 0–48 dB, internally inverted so higher = stronger signal; RTL-SDR: 0–49.6 dB). AGC, if the driver defaults it on, is disabled at startup so the slider always takes effect. A **HackRF** has three gain stages and gets a **Stages** row under the slider with a box for each: **LNA** (0–40 dB in steps of 8), **VGA** (0–62 dB in steps of 2) and **AMP** (the front-end amplifier, 14 dB or off). The slider is the sum of LNA and VGA and fills the LNA first, because that stage sets the noise figure; the boxes set a stage directly, and AMP is never touched by the slider. These are the same three numbers SDR Console shows. Through 1.8.0 the HackRF had a single slider that stopped at 47 dB. How to tell the gain is high enough for weak-signal work: raise it until the noise floor on the screen rises dB for dB with the gain. Below that point the radio's own noise is most of what you are looking at, and a weak line is drawn shorter than it is.
 
 - **Antenna**: appears only when the open radio has more than one RF input. For a B210 this lists all four physical connectors as `A : RX2`, `A : TX/RX`, `B : RX2`, `B : TX/RX` — receiver A and receiver B, each with its two SMA ports — and switching includes hopping between the two receivers. An RSPduo lists its two tuners. Pick the connector your cable is actually plugged into; the choice is remembered per radio. Single-port radios (most RTL dongles, the RSP1B) don't show this control.
 
