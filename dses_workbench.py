@@ -183,6 +183,10 @@ WINDOWS = {
 # change swaps the chain under lock/unlock. The plot downsamples the long
 # curves so drawing stays cheap.
 FFT_SIZES = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
+HI_REST_HZ = 1420.405751786e6       # neutral-hydrogen rest frequency
+# Recording panel Repeat choices: (label, settings code).
+REC_REPEAT_MODES = (("Once", 'once'), ("Every sidereal day", 'sidereal'),
+                    ("Every solar day", 'solar'), ("Custom interval", 'custom'))
 
 
 def _pretty_rate(hz: float) -> str:
@@ -258,6 +262,14 @@ DEFAULTS = {
         # the start and the recording starts itself.
         'rec_start':       '',
         'rec_start_tz':    'UTC',
+        # Repeating schedule (2026-11-19): 'once' | 'sidereal' (23 h 56 m 04 s
+        # apart: the start follows the sky) | 'solar' (same clock time) |
+        # 'custom' (rec_repeat_custom = H:MM:SS between starts). Each recording
+        # is rec_duration long; rec_repeat_count of them, counted from the
+        # first start so the spacing never drifts.
+        'rec_repeat':      'once',
+        'rec_repeat_count': 7,
+        'rec_repeat_custom': '',
         # Run the canned PRESTO pipeline (readfile + rfifind + catalog fold
         # -> self-contained PDF) automatically when a .fil recording stops.
         'analyze_when_done': True,
@@ -314,6 +326,9 @@ DEFAULTS = {
                                     # linear, so linear is now the honest default; note
                                     # the noise floor reads ~2.5 dB higher than <=1.1.6.
         'smooth_bins':     0,       # spectral smoothing off (harms narrow lines)
+        'trace_detector':  'average',  # bins -> pixels for the main trace:
+                                    # 'average' (mean power per pixel column),
+                                    # 'peak' (the <=1.7.0 envelope), 'both'
         'baseline_mode':   'off',   # 'off' | 'reference' (ON/OFF) | 'flatten' (median)
         'flatten_bins':    151,     # median window for the Flatten bandpass estimate
         'max_hold':        False,
@@ -1182,6 +1197,15 @@ class FftPlotWidget(QtWidgets.QWidget):
     # Fires on every user-driven control change; args: (settings_key, value).
     # The main window listens once and persists to the INI.
     control_changed = Signal(str, object)
+    line_view_changed = Signal(bool)     # the Line view toggle (menu mirror)
+
+    ENVELOPE_ALPHA = 0.30                # peak envelope behind the mean line
+    # Line view: what one click sets (see _on_line_view_toggled).
+    LINE_VIEW_RBW_HZ = 1000.0            # FFT size chosen nearest this RBW
+    LINE_VIEW_ALPHA = 0.05               # ~39 frames, about a 2 s time constant
+    LINE_VIEW_SMOOTH_BINS = 9            # ~9 kHz = ~2 km/s at 1420 MHz
+    LINE_VIEW_HALF_SPAN_HZ = 0.9e6       # +-190 km/s around the line
+    LINE_VIEW_SETTLE_MS = 4000           # then fit Y tightly, once
 
     def __init__(self, center_freq, samp_rate, parent=None):
         super().__init__(parent)
@@ -1250,9 +1274,36 @@ class FftPlotWidget(QtWidgets.QWidget):
         # Keep large FFTs (up to 65536-pt) cheap to draw: downsample to the
         # visible pixel columns using peak mode (preserves narrow peaks) and clip
         # to the view. Without this, three long curves at 10 Hz bog the GUI.
-        for _c in (self._curve, self._max_curve, self._min_curve):
+        # Peak envelope drawn faintly BEHIND the mean line in the 'both' trace
+        # detector mode (see _render_frame).
+        self._env_curve = self._plot.plot(
+            pen=_make_pen(self._line_color, 1, self.ENVELOPE_ALPHA))
+        self._env_curve.setZValue(-5)
+        self._env_curve.hide()
+        for _c in (self._curve, self._max_curve, self._min_curve, self._env_curve):
             _c.setDownsampling(auto=True, method='peak')
             _c.setClipToView(True)
+        # Trace detector (1.8, from Ray Uberecken's SDR Console comparison,
+        # 2026-11-18): how many-bins-per-pixel is reduced for the MAIN trace.
+        # pyqtgraph's peak downsampling above draws the highest and lowest bin
+        # under each pixel column — a band several sigma thick that buried his
+        # 0.5 dB hydrogen line at 65536 points. 'average' draws the mean power
+        # per column instead (what SDR Console shows); 'peak' is the old
+        # behaviour; 'both' = mean line over a faint peak envelope. The hold
+        # traces always keep peak reduction.
+        self._trace_detector = 'average'
+        self._last_frame = None         # (avg_db, max_db, min_db, forced_detector)
+        self._render_key = None         # (x0, x1, width) the last reduction used
+        self._rendering = False
+        self._plot.getPlotItem().getViewBox().sigResized.connect(
+            lambda *_a: self._rerender_if_view_changed())
+        # Line view: remembered settings to put back when it is switched off,
+        # and the delayed tight Y fit once the new average has settled.
+        self._line_view_prev = None
+        self._line_view_timer = QtCore.QTimer(self)
+        self._line_view_timer.setSingleShot(True)
+        self._line_view_timer.setInterval(self.LINE_VIEW_SETTLE_MS)
+        self._line_view_timer.timeout.connect(self._autoscale_y_tight)
 
         # Cursor read-out: red text showing the frequency + level wherever the
         # mouse is over the plot, like the GNU Radio qtgui freq sink. The values
@@ -1334,6 +1385,24 @@ class FftPlotWidget(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(panel)
         v.setContentsMargins(6, 6, 6, 6)
         v.setSpacing(4)
+
+        self._line_view_btn = QtWidgets.QPushButton("Line view")
+        self._line_view_btn.setCheckable(True)
+        self._line_view_btn.setToolTip(
+            "One click to WATCH a spectral line (the hydrogen line) change in "
+            "shape and height:\n"
+            "• FFT size for about 1 kHz resolution at the current sample rate\n"
+            "• Avg α 0.05 — about a two-second response\n"
+            "• Smooth 9 bins, Trace = Average, Max/Min hold off, DC spike "
+            "removed\n"
+            "• the view zoomed to ±0.9 MHz around 1420.406 MHz when that is "
+            "in band\n"
+            "• a tight Y fit a few seconds later (a narrow carrier runs off "
+            "the top)\n"
+            "Click again to put back the settings you had. Baseline is left "
+            "as you set it.")
+        self._line_view_btn.toggled.connect(self._on_line_view_toggled)
+        v.addWidget(self._line_view_btn)
 
         # FFT group
         fft_group = QtWidgets.QGroupBox("FFT")
@@ -1433,6 +1502,25 @@ class FftPlotWidget(QtWidgets.QWidget):
         self._smooth_spin.valueChanged.connect(
             lambda n: self.control_changed.emit('smooth_bins', n))
         f.addRow("Smooth (bins):", self._smooth_spin)
+
+        self._trace_combo = QtWidgets.QComboBox()
+        for _label, _code in (("Average", 'average'), ("Peak", 'peak'),
+                              ("Average + peak", 'both')):
+            self._trace_combo.addItem(_label, _code)
+        self._trace_combo.setToolTip(
+            "How the trace is drawn when there are more FFT bins than screen "
+            "pixels (large FFT sizes).\n"
+            "Average: the mean power of the bins under each pixel — a thin "
+            "line, the way SDR Console draws it; a weak broad line stands out "
+            "without a long time average.\n"
+            "Peak: the highest and lowest bin under each pixel — a band as "
+            "thick as the noise, but the weakest NARROW carrier still shows. "
+            "Use it for RFI hunting (Sweep always does).\n"
+            "Average + peak: the thin line over a faint peak band.\n"
+            "The Max/Min hold traces always use Peak.")
+        self._trace_combo.currentIndexChanged.connect(
+            self._on_trace_detector_changed)
+        f.addRow("Trace:", self._trace_combo)
         v.addWidget(fft_group)
 
         # Hold group
@@ -1640,13 +1728,68 @@ class FftPlotWidget(QtWidgets.QWidget):
         return np.power(10.0, np.asarray(db) / 20.0)
 
     @Slot(object, object, object)
-    def on_frame(self, avg_db, max_db, min_db):
+    def on_frame(self, avg_db, max_db, min_db, detector=None):
+        """Draw one frame. `detector` overrides the Trace setting for this
+        frame (Sweep passes 'peak': an RFI survey must not average a narrow
+        carrier away)."""
+        self._last_frame = (avg_db, max_db, min_db, detector)
+        self._render_frame()
+
+    def _reduce_mean(self, freqs, y_db):
+        """Mean POWER per pixel column for the bins inside the current X
+        view, as (freq, dB) arrays — or None when the bins are few enough to
+        draw one by one (at most two per pixel). Sets self._render_key."""
+        vb = self._plot.getPlotItem().getViewBox()
+        w = int(vb.width())
+        (x0, x1), _yr = vb.viewRange()
+        self._render_key = (float(x0), float(x1), w)
+        n = len(freqs)
+        if w < 16 or n < 4:
+            return None
+        i0 = max(0, int(np.searchsorted(freqs, x0, 'left')) - 1)
+        i1 = min(n, int(np.searchsorted(freqs, x1, 'right')) + 1)
+        m = i1 - i0
+        if m <= 2 * w:
+            return None
+        g = -(-m // w)                              # bins per column, ceil
+        idx = np.arange(0, m, g)
+        cnt = np.diff(np.append(idx, m))
+        p = np.power(10.0, np.asarray(y_db[i0:i1], dtype=np.float64) / 10.0)
+        mean = np.add.reduceat(p, idx) / cnt
+        fx = np.add.reduceat(np.asarray(freqs[i0:i1], dtype=np.float64), idx) / cnt
+        return fx, 10.0 * np.log10(np.maximum(mean, 1e-300))
+
+    def _render_frame(self):
+        if self._last_frame is None or self._rendering:
+            return
+        self._rendering = True
+        try:
+            self._render_frame_inner()
+        finally:
+            self._rendering = False
+
+    def _render_frame_inner(self):
+        avg_db, max_db, min_db, forced = self._last_frame
         n = len(avg_db)
         freqs = self._center_freq + np.fft.fftshift(np.fft.fftfreq(n, d=1.0 / self._samp_rate))
-        avg = self._to_linear(avg_db) if self._linear else avg_db
+        det = forced or self._trace_detector
+        fx, fy, reduced = freqs, avg_db, False
+        self._render_key = None
+        if det in ('average', 'both'):
+            red = self._reduce_mean(freqs, avg_db)
+            if red is not None:
+                fx, fy = red
+                reduced = True
+        avg = self._to_linear(fy) if self._linear else fy
         mx = (self._to_linear(max_db) if self._linear else max_db) if max_db is not None else None
         mn = (self._to_linear(min_db) if self._linear else min_db) if min_db is not None else None
-        self._curve.setData(freqs, avg)
+        self._curve.setData(fx, avg)
+        if det == 'both' and reduced:
+            self._env_curve.setData(
+                freqs, self._to_linear(avg_db) if self._linear else avg_db)
+            self._env_curve.show()
+        else:
+            self._env_curve.hide()
         if mx is not None:
             self._max_curve.setData(freqs, mx); self._max_curve.show()
         else:
@@ -1722,6 +1865,7 @@ class FftPlotWidget(QtWidgets.QWidget):
             (x0, x1), (y0, y1) = ranges
         except (TypeError, ValueError):
             return
+        self._rerender_if_view_changed()    # zoom/pan changes bins per pixel
         self._x_view = (float(x0), float(x1))
         self._y_min, self._y_max = float(y0), float(y1)
         for spin, val in ((self._ymin_spin, self._y_min),
@@ -1729,6 +1873,109 @@ class FftPlotWidget(QtWidgets.QWidget):
             spin.blockSignals(True); spin.setValue(val); spin.blockSignals(False)
         if self._persist_ranges_enabled:
             self._range_save_timer.start()
+
+    def _rerender_if_view_changed(self):
+        """Redo the per-pixel reduction when the X view or the plot width
+        changed between frames (a zoom, a pan, a window resize), so the trace
+        follows the mouse instead of waiting for the next frame."""
+        if self._last_frame is None or self._rendering:
+            return
+        det = self._last_frame[3] or self._trace_detector
+        if det == 'peak':
+            return                      # pyqtgraph re-reduces by itself
+        vb = self._plot.getPlotItem().getViewBox()
+        (x0, x1), _yr = vb.viewRange()
+        if (float(x0), float(x1), int(vb.width())) != self._render_key:
+            self._render_frame()
+
+    def _on_trace_detector_changed(self, _i):
+        self._trace_detector = self._trace_combo.currentData() or 'average'
+        self.control_changed.emit('trace_detector', self._trace_detector)
+        self._render_frame()
+
+    def _autoscale_y_tight(self):
+        """Fit Y closely around the visible main trace and lock it: 1st to
+        99.5th percentile plus a quarter of that span, so a narrow carrier
+        runs off the top instead of flattening a half-dB line (SDR Console's
+        1 dB-per-division look). dB scale only; linear mode auto-fits."""
+        if self._linear:
+            return
+        x, y = self._curve.getData()
+        if x is None or y is None or len(y) < 8:
+            return
+        (x0, x1), _yr = self._plot.getPlotItem().getViewBox().viewRange()
+        x = np.asarray(x, dtype=float); y = np.asarray(y, dtype=float)
+        y = y[(x >= x0) & (x <= x1) & np.isfinite(y)]
+        if len(y) < 8:
+            return
+        lo, hi = np.percentile(y, [1.0, 99.5])
+        span = max(float(hi - lo), 0.3)
+        self._plot.setYRange(float(lo) - 0.25 * span, float(hi) + 0.25 * span,
+                             padding=0)        # -> sigRangeChanged -> saved
+
+    def line_view_fft_size(self):
+        """The FFT size whose RBW is nearest LINE_VIEW_RBW_HZ at this rate."""
+        target = max(self._samp_rate, 1.0) / self.LINE_VIEW_RBW_HZ
+        return min(FFT_SIZES, key=lambda n: abs(np.log(n / target)))
+
+    def set_line_view(self, on):
+        """Programmatic toggle (the View menu action)."""
+        if self._line_view_btn.isChecked() != bool(on):
+            self._line_view_btn.setChecked(bool(on))
+
+    def _on_line_view_toggled(self, on):
+        """One click to WATCH a spectral line the way SDR Console shows it:
+        about 1 kHz resolution, a ~2 s average, light smoothing, the mean
+        trace, the view zoomed on the hydrogen line when it is in band, and a
+        tight Y fit a few seconds later. Switching it off puts back what was
+        there before. Everything goes through the ordinary controls, so the
+        processor and the saved settings follow as if set by hand."""
+        if on:
+            self._line_view_prev = {
+                'fft': self._fft_size_combo.currentIndex(),
+                'alpha': self._avg_slider.value(),
+                'smooth': self._smooth_spin.value(),
+                'trace': self._trace_combo.currentIndex(),
+                'max': self._max_check.isChecked(),
+                'min': self._min_check.isChecked(),
+                'dc': self._dc_check.isChecked(),
+                'pavg': self._power_avg_check.isChecked(),
+                'x': self._x_view, 'y': (self._y_min, self._y_max),
+            }
+            idx = self._fft_size_combo.findData(self.line_view_fft_size())
+            if idx >= 0:
+                self._fft_size_combo.setCurrentIndex(idx)
+            self._avg_slider.setValue(int(round(self.LINE_VIEW_ALPHA * 1000)))
+            self._smooth_spin.setValue(self.LINE_VIEW_SMOOTH_BINS)
+            self._trace_combo.setCurrentIndex(self._trace_combo.findData('average'))
+            self._max_check.setChecked(False)
+            self._min_check.setChecked(False)
+            self._dc_check.setChecked(True)
+            self._power_avg_check.setChecked(True)
+            lo = self._center_freq - self._samp_rate / 2.0
+            hi = self._center_freq + self._samp_rate / 2.0
+            half = self.LINE_VIEW_HALF_SPAN_HZ
+            if lo < HI_REST_HZ < hi and (hi - lo) > 2.4 * half:
+                self._plot.setXRange(max(lo, HI_REST_HZ - half),
+                                     min(hi, HI_REST_HZ + half), padding=0)
+            self._line_view_timer.start()
+        else:
+            self._line_view_timer.stop()
+            prev, self._line_view_prev = self._line_view_prev, None
+            if prev:
+                self._fft_size_combo.setCurrentIndex(prev['fft'])
+                self._avg_slider.setValue(prev['alpha'])
+                self._smooth_spin.setValue(prev['smooth'])
+                self._trace_combo.setCurrentIndex(prev['trace'])
+                self._max_check.setChecked(prev['max'])
+                self._min_check.setChecked(prev['min'])
+                self._dc_check.setChecked(prev['dc'])
+                self._power_avg_check.setChecked(prev['pavg'])
+                if prev['x'] is not None:
+                    self._plot.setXRange(prev['x'][0], prev['x'][1], padding=0)
+                if not self._linear:
+                    self._plot.setYRange(prev['y'][0], prev['y'][1], padding=0)
+        self.line_view_changed.emit(bool(on))
 
     def _persist_ranges(self):
         """Write the current view to [spectrum] (via control_changed)."""
@@ -2013,6 +2260,7 @@ class FftPlotWidget(QtWidgets.QWidget):
             self._alpha_slider.setValue(int(round(self._line_alpha * 100)))
             self._label_edit.setText(self._line_label)
         self._curve.setPen(_make_pen(self._line_color, self._line_width, self._line_alpha))
+        self._env_curve.setPen(_make_pen(self._line_color, 1, self.ENVELOPE_ALPHA))
 
     def _on_max_toggled(self, on):
         self.request_max_hold.emit(on)
@@ -2039,6 +2287,7 @@ class FftPlotWidget(QtWidgets.QWidget):
             self._slot_for(self._dark_bg)['color'] = c
             self._color_btn.setStyleSheet(f"background-color: {c.name()};")
             self._curve.setPen(_make_pen(c, self._line_width, self._line_alpha))
+            self._env_curve.setPen(_make_pen(c, 1, self.ENVELOPE_ALPHA))
             self.control_changed.emit(self._trace_key('trace_color'), c.name())
 
     def _on_width_changed(self, w):
@@ -2074,6 +2323,7 @@ class FftPlotWidget(QtWidgets.QWidget):
         with _SignalBlocker(self._fft_size_combo, self._window_combo, self._norm_check,
                             self._dc_check, self._unit_combo, self._cal_spin,
                             self._avg_slider, self._power_avg_check, self._smooth_spin,
+                            self._trace_combo,
                             self._baseline_combo, self._flatten_spin,
                             self._max_check,
                             self._min_check, self._hold_detector_combo,
@@ -2098,6 +2348,9 @@ class FftPlotWidget(QtWidgets.QWidget):
             self._avg_value_lbl.setText(self._fmt_avg(_av))
             self._power_avg_check.setChecked(settings.get_bool(section, 'power_avg'))
             self._smooth_spin.setValue(settings.get_int(section, 'smooth_bins'))
+            tidx = self._trace_combo.findData(settings.get_str(section, 'trace_detector'))
+            if tidx >= 0:
+                self._trace_combo.setCurrentIndex(tidx)
             bidx = self._baseline_combo.findData(settings.get_str(section, 'baseline_mode'))
             if bidx >= 0:
                 self._baseline_combo.setCurrentIndex(bidx)
@@ -2123,6 +2376,7 @@ class FftPlotWidget(QtWidgets.QWidget):
         self._plot.showGrid(x=self._grid_check.isChecked(), y=self._grid_check.isChecked(), alpha=0.3)
         self._y_unit = self._unit_combo.currentData() or 'relative'
         self._cal_spin.setEnabled(self._y_unit == 'dbm')
+        self._trace_detector = self._trace_combo.currentData() or 'average'
         _bmode = self._baseline_combo.currentData() or 'off'
         self._store_ref_btn.setEnabled(_bmode == 'reference')
         self._flatten_spin.setEnabled(_bmode == 'flatten')
@@ -3408,6 +3662,25 @@ to the start (and, with <b>Record for</b>, the planned end), the
 source-visibility and hydrogen-line questions are asked up front so the
 start itself needs nobody at the keyboard, and <i>Stopped</i> cancels. Blank
 starts at once.</li>
+<li><b>Repeat</b>: make the same recording again and again with the start
+moving by itself. <i>Every sidereal day</i> spaces the starts 23 h 56 m 04 s
+apart, so each one begins 3 m 56 s earlier by the clock and the same patch of
+sky is overhead every time: the galactic plane crossing of a fixed dish, a
+pulsar, any source with a fixed place among the stars. <i>Every solar day</i>
+keeps the same clock time (the Sun). <i>Custom interval</i> takes your own
+spacing as <code>H:MM:SS</code> — <code>24:50:28</code> follows the Moon's
+average day, though the Moon and the planets wander against any fixed
+spacing over a few weeks. Each recording is <b>Record for</b> long (required
+here), <b>×N</b> sets how many, and the first start is <b>Start at</b> (or
+now when that is blank); every later start is counted from the first one, so
+the spacing never drifts. The amber status shows which recording is next
+(<i>3 of 14</i>) and when. If the computer wakes up inside a recording's
+window, the rest of that window is recorded and it still ends on schedule; a
+recording that cannot start (no radio) is skipped and the series goes on.
+<i>Stopped</i> cancels the whole series. The series lives in the running
+program: after a restart, put the first start's date and time back into
+<b>Start at</b> (hover the amber status to read it) with the same Repeat
+setting, and it resumes at the next one due.</li>
 <li><b>Record</b>: <i>Stopped</i> / <i>Recording</i>. Recording always
 starts <i>Stopped</i> on launch. While recording, a red <b>REC</b> counter
 shows elapsed time (or the countdown when a duration is set).</li>
@@ -3467,6 +3740,31 @@ weak line (the hydrogen line is a few tenths of a dB on a small dish) use
 RTL-SDR and similar radios put at the tuned centre by bridging the window's
 main lobe around the centre bin with its neighbours. Display only — the
 recorders always get the raw stream.</li>
+<li><b>Trace</b>: how the trace is drawn when there are more FFT bins than
+screen pixels (any large FFT size). <i>Average</i> (the default) draws the
+mean power of the bins under each pixel: a thin line, the way SDR Console
+draws it, in which a weak broad line stands out without a long time average.
+<i>Peak</i> draws the highest and lowest bin under each pixel — a band as
+thick as the noise (at 65536 points it can be thicker than the hydrogen line
+is tall), but the weakest <i>narrow</i> carrier still shows, so use it for
+RFI hunting; Sweep always uses it, and so do the Max/Min hold traces.
+<i>Average + peak</i> draws the thin line over a faint peak band. Zoom in
+until there are two bins or fewer per pixel and every bin is drawn as it
+is, whatever this is set to.</li>
+<li><b>Line view</b> (the button at the top of the panel, View menu,
+Ctrl+L): one click to <i>watch</i> a spectral line change in shape and
+height. It picks the FFT size that gives about 1 kHz resolution at the
+current sample rate, sets Avg α to 0.05 (about a two-second response),
+Smooth to 9 bins, Trace to Average, turns the holds off, zooms to ±0.9 MHz
+around 1420.406 MHz when the hydrogen line is in a wide enough band, and a
+few seconds later fits the Y axis closely around the trace (a narrow carrier
+runs off the top rather than flattening the line). Click it again to get
+back the settings you had. Why these numbers: the scatter of a trace falls
+as 1/√(resolution × time), so a 30 Hz bin needs fifty times the averaging
+of a 1.5 kHz one for the same smoothness — fine resolution is for narrow
+carriers, not for a line a hundred kilohertz wide. Baseline is left as you
+set it; add <b>Flatten</b> or a stored reference if you want the bandpass
+removed as well.</li>
 <li><b>Baseline</b>: removes the receiver's bandpass shape so a weak line
 stands up from a flat floor near 0&nbsp;dB. <i>Off</i>: raw spectrum.
 <i>Reference (ON/OFF)</i>: point at empty sky, click <b>Store reference
@@ -6919,6 +7217,17 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._rec_wait_timer = QtCore.QTimer(self)
         self._rec_wait_timer.setInterval(1000)
         self._rec_wait_timer.timeout.connect(self._tick_armed)
+        # Repeating schedule (Ray Uberecken's ask, 2026-11-19): the same
+        # length every day with the start following the sky. _rec_series is
+        # the running series (None when there is none): anchor (start of
+        # recording 0), mode, interval, dur, utc, count, made, k.
+        self._rec_repeat_mode = (self._app_settings.get_str('recording', 'rec_repeat')
+                                 or 'once')
+        self._rec_repeat_count = max(2, self._app_settings.get_int('recording', 'rec_repeat_count'))
+        self._rec_repeat_custom = self._app_settings.get_str('recording', 'rec_repeat_custom')
+        self._rec_series = None
+        self._rec_series_run_s = None       # length of the NEXT recording (late start = shorter)
+        self._rec_series_advancing = False  # an auto-stop inside a series, not a user stop
 
         self._recording_dir_button = QtWidgets.QPushButton("Folder: " + self._elided_dir())
         self._recording_dir_button.setToolTip(self.recording_dir)
@@ -7292,6 +7601,51 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         _st_row.addWidget(self._rec_start_tz_combo)
         self._record_group_layout.addWidget(self._rec_start_widget)
 
+        # --- Optional repeat: the same length every day, start following the sky
+        self._rec_repeat_widget = QtWidgets.QWidget(self)
+        _rp_row = QtWidgets.QHBoxLayout(self._rec_repeat_widget)
+        _rp_row.setContentsMargins(0, 0, 0, 0)
+        _rp_row.addWidget(QtWidgets.QLabel("Repeat:"))
+        self._rec_repeat_combo = QtWidgets.QComboBox()
+        for _label, _code in REC_REPEAT_MODES:
+            self._rec_repeat_combo.addItem(_label, _code)
+        _ri = self._rec_repeat_combo.findData(self._rec_repeat_mode)
+        self._rec_repeat_combo.setCurrentIndex(_ri if _ri >= 0 else 0)
+        self._rec_repeat_combo.setToolTip(
+            "Repeat the recording, the same length each time (Record for), "
+            "with the start moving by itself:\n"
+            "• Every sidereal day — 23 h 56 m 04 s apart, so each start is "
+            "3 m 56 s EARLIER by the clock and the same patch of sky is "
+            "overhead every time (the galactic plane crossing, a pulsar, any "
+            "fixed source).\n"
+            "• Every solar day — the same clock time each day (the Sun).\n"
+            "• Custom interval — your own spacing, e.g. 24:50:28 for the "
+            "Moon's average day.\n"
+            "The first start is Start at (or now when that is blank); every "
+            "later start is counted from that one, so nothing drifts. Stopped "
+            "cancels the series. After a restart, enter the first start's "
+            "date and time again: the series picks up at the next one due.")
+        self._rec_repeat_combo.currentIndexChanged.connect(self._on_rec_repeat_changed)
+        _rp_row.addWidget(self._rec_repeat_combo, 1)
+        self._rec_repeat_custom_edit = QtWidgets.QLineEdit(self._rec_repeat_custom)
+        self._rec_repeat_custom_edit.setPlaceholderText("H:MM:SS")
+        self._rec_repeat_custom_edit.setToolTip(
+            "Time between starts for Custom interval: H:MM or H:MM:SS "
+            "(24:50:28), or plain minutes.")
+        self._rec_repeat_custom_edit.setMaximumWidth(80)
+        self._rec_repeat_custom_edit.editingFinished.connect(self._on_rec_repeat_changed)
+        _rp_row.addWidget(self._rec_repeat_custom_edit)
+        self._rec_repeat_count_spin = QtWidgets.QSpinBox()
+        self._rec_repeat_count_spin.setRange(2, 999)
+        self._rec_repeat_count_spin.setPrefix("× ")
+        self._rec_repeat_count_spin.setValue(self._rec_repeat_count)
+        self._rec_repeat_count_spin.setToolTip("How many recordings to make.")
+        self._rec_repeat_count_spin.valueChanged.connect(self._on_rec_repeat_changed)
+        _rp_row.addWidget(self._rec_repeat_count_spin)
+        self._record_group_layout.addWidget(self._rec_repeat_widget)
+        self._rec_repeat_custom_edit.setVisible(self._rec_repeat_mode == 'custom')
+        self._rec_repeat_count_spin.setEnabled(self._rec_repeat_mode != 'once')
+
         # --- Record selector ---
         self._record_options = [0, 1]
         self._record_labels = ['Stopped', 'Recording']
@@ -7519,6 +7873,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         # Per-plot setting persistence. Each widget emits control_changed
         # (settings_key, value); we route to the appropriate INI section.
         self._fft_plot.control_changed.connect(self._on_spectrum_control_changed)
+        self._fft_plot.line_view_changed.connect(self._line_view_act.setChecked)
         self._waterfall_plot.control_changed.connect(
             lambda k, v: self._save_setting('waterfall', k, v))
 
@@ -8032,7 +8387,8 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                                 and self._sweep_max_db is not None
                                 and len(self._sweep_max_db) == len(self._sweep_wide_db))
                             else None)
-            self._fft_plot.on_frame(self._sweep_wide_db, max_for_plot, None)
+            self._fft_plot.on_frame(self._sweep_wide_db, max_for_plot, None,
+                                    detector='peak')
 
         self._sweep_step_idx += 1
         if self._sweep_step_idx >= self._sweep_n_steps:
@@ -8069,7 +8425,8 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                         if (self._sweep_show_max
                             and self._sweep_max_db is not None)
                         else None)
-        self._fft_plot.on_frame(self._sweep_wide_db, max_for_plot, None)
+        self._fft_plot.on_frame(self._sweep_wide_db, max_for_plot, None,
+                                    detector='peak')
         self._waterfall_plot.on_frame(self._sweep_wide_db, None, None)
 
     def _build_menu_bar(self):
@@ -8116,6 +8473,14 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             sub.addSeparator()
             self._col_menus[area] = (act, sub)
         self._view_menu_sep = self._view_menu.addSeparator()
+        # Line view: one click to watch a spectral line (mirrors the button
+        # at the top of the Spectrum Display panel; the plot does the work).
+        self._line_view_act = QtGui.QAction("&Line View (watch the hydrogen line)", self)
+        self._line_view_act.setCheckable(True)
+        self._line_view_act.setShortcut(QtGui.QKeySequence("Ctrl+L"))
+        self._line_view_act.toggled.connect(
+            lambda on: self._fft_plot.set_line_view(on))
+        self._view_menu.addAction(self._line_view_act)
         fs_act = QtGui.QAction("&Full Screen", self)
         fs_act.setCheckable(True)
         fs_act.setShortcut(QtGui.QKeySequence.FullScreen)
@@ -9367,6 +9732,43 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                     self.record = 0
                     self._record_callback(0)
                     return
+        if not scheduled:
+            # A fresh press of Record: any earlier series is over. With a
+            # Repeat mode set, plan the series now (refusing what cannot
+            # work) and let it choose this first start.
+            self._rec_series = None
+            self._rec_series_run_s = None
+            if self._rec_repeat_mode != 'once':
+                dur = self._parse_duration_s(self._rec_duration_text)
+                err = None
+                try:
+                    interval = self._repeat_interval_s(self._rec_repeat_mode,
+                                                       self._rec_repeat_custom)
+                except ValueError as exc:
+                    interval, err = 0.0, str(exc)
+                if err is None and dur <= 0:
+                    err = ("A repeating schedule needs a length: fill in "
+                           "Record for.")
+                if err is None and dur >= interval:
+                    err = (f"Record for ({self._fmt_hms(dur)}) must be shorter "
+                           f"than the repeat interval ({self._fmt_hms(interval)}).")
+                if err:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Repeat schedule not usable", err)
+                    self.record = 0
+                    self._record_callback(0)
+                    return
+                now = time.time()
+                utc = self._rec_start_tz != "Local"
+                anchor = float(start_ts) if start_ts is not None else now
+                k, st, run = self._series_plan(anchor, self._rec_repeat_mode,
+                                               interval, dur, now, utc)
+                self._rec_series = dict(
+                    anchor=anchor, mode=self._rec_repeat_mode, interval=interval,
+                    dur=float(dur), utc=utc, count=int(self._rec_repeat_count),
+                    made=0, k=k)
+                self._rec_series_run_s = run
+                start_ts = st
         if start_ts is not None and start_ts - time.time() > 1.0:
             self._arm_scheduled_start(start_ts)   # wait; _tick_armed starts it
             return
@@ -10105,9 +10507,16 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
 
     def _stop_recording(self):
         """Pull whichever recording sink is active out of the flowgraph and
-        finalize its file. Armed but not yet recording: just cancel."""
+        finalize its file. Armed but not yet recording: just cancel. A stop
+        that is not a series' own auto-stop ends the series."""
+        in_series = self._rec_series is not None
+        if not self._rec_series_advancing:
+            self._rec_series = None
+            self._rec_series_run_s = None
         if self._rec_sched_ts is not None:
-            self._cancel_scheduled_start("Idle (scheduled start cancelled)")
+            self._cancel_scheduled_start(
+                "Idle (recording series cancelled)" if in_series
+                else "Idle (scheduled start cancelled)")
             return
         if self._fil_sink is not None:
             self._stop_fil_recording()
@@ -10368,14 +10777,30 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         """Wait for the scheduled instant: amber ARMED status, countdown in
         the counter slot, the timed-recording controls locked as if live."""
         self._rec_sched_ts = float(start_ts)
-        self._recording_status.setText(
-            f"Armed — recording starts at {self._fmt_clock_tz(start_ts)}")
+        s = self._rec_series
+        if s is not None:
+            self._recording_status.setText(
+                f"Armed — recording {s['made'] + 1} of {s['count']} starts at "
+                f"{self._fmt_clock_tz(start_ts)}")
+            _a = time.gmtime(s['anchor']) if s['utc'] else time.localtime(s['anchor'])
+            self._recording_status.setToolTip(
+                "Recording series: first start "
+                + time.strftime("%Y-%m-%d %H:%M:%S", _a)
+                + (" UTC" if s['utc'] else " local")
+                + f", one every {self._fmt_hms(s['interval'])}, "
+                + f"{self._fmt_hms(s['dur'])} each.\nTo pick the series up "
+                "after a restart, enter that date and time in Start at with "
+                "the same Repeat setting.")
+        else:
+            self._recording_status.setText(
+                f"Armed — recording starts at {self._fmt_clock_tz(start_ts)}")
         self._recording_status.setStyleSheet(
             "color: black; background-color: #f5b041;"
             " padding: 2px 4px; border-radius: 3px;")     # amber = ARMED
         self._source_name_widget.setEnabled(False)
         self._rec_duration_widget.setEnabled(False)
         self._rec_start_widget.setEnabled(False)
+        self._rec_repeat_widget.setEnabled(False)
         self._rec_elapsed_label.setStyleSheet(
             "color: #b9770e; font-weight: bold;")          # amber countdown
         self._rec_elapsed_label.setVisible(True)
@@ -10392,6 +10817,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._source_name_widget.setEnabled(True)
         self._rec_duration_widget.setEnabled(True)
         self._rec_start_widget.setEnabled(True)
+        self._rec_repeat_widget.setEnabled(True)
         self._rec_elapsed_label.setVisible(False)
         self._rec_elapsed_label.setText("")
         self._rec_elapsed_label.setStyleSheet(
@@ -10419,8 +10845,106 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         if self._rec_start_time is None:            # nothing started (radio gone?)
             self._cancel_scheduled_start(
                 "Scheduled start failed: no recording source")
+            if self._rec_series is not None:
+                # A series survives one missed recording (a radio unplugged
+                # for a day): the slot is spent, the next one is armed.
+                self._series_continue()
+                if self._rec_series is not None:
+                    return
             self.record = 0
             self._record_callback(0)
+
+    # --- Repeating schedule ------------------------------------------------
+    SIDEREAL_DAY_S = 86164.0905      # mean sidereal day in clock (UTC) seconds
+
+    @staticmethod
+    def _repeat_interval_s(mode, custom_text=""):
+        """Seconds between starts for a Repeat mode. Raises ValueError with a
+        message fit for a dialog."""
+        if mode == 'sidereal':
+            return dses_workbench.SIDEREAL_DAY_S
+        if mode == 'solar':
+            return 86400.0
+        if mode == 'custom':
+            s = dses_workbench._parse_duration_s(custom_text)
+            if s < 60:
+                raise ValueError(
+                    "Custom interval not understood: use H:MM or H:MM:SS "
+                    "(for example 24:50:28), at least one minute.")
+            return float(s)
+        raise ValueError(f"repeat mode {mode!r} not understood")
+
+    @staticmethod
+    def _series_start(anchor_ts, mode, interval_s, k, utc=True):
+        """Start of recording k (0-based) of a series. Always counted from
+        the anchor, so the spacing never accumulates an error. A solar-day
+        series read on the LOCAL clock keeps its wall-clock time across a
+        daylight-saving change (mktime normalizes the day)."""
+        if mode == 'solar' and not utc:
+            st = time.localtime(anchor_ts)
+            return float(time.mktime((st.tm_year, st.tm_mon, st.tm_mday + int(k),
+                                      st.tm_hour, st.tm_min, st.tm_sec, 0, 1, -1)))
+        return float(anchor_ts) + int(k) * float(interval_s)
+
+    @staticmethod
+    def _series_plan(anchor_ts, mode, interval_s, dur_s, now, utc=True):
+        """(k, start_ts, run_s): the next recording to make at time `now`.
+        Still ahead of its start: wait for it and record the full length.
+        Inside its window (a late start): begin at once and stop at the
+        scheduled END, as long as a useful stretch is left. Otherwise the
+        next one. An anchor in the past is fine — that is how a series is
+        picked up again after a restart."""
+        start = dses_workbench._series_start
+        min_run = min(60.0, 0.5 * float(dur_s))
+        k = max(0, int((now - anchor_ts) // float(interval_s)) - 1)
+        while True:
+            st = start(anchor_ts, mode, interval_s, k, utc)
+            if now <= st + 1.0:
+                return k, st, float(dur_s)
+            left = st + float(dur_s) - now
+            if left >= min_run:
+                return k, float(now), float(left)
+            k += 1
+
+    def _series_suffix(self):
+        s = self._rec_series
+        return f"   · {s['made'] + 1} of {s['count']}" if s is not None else ""
+
+    def _series_continue(self):
+        """One recording of the series is over (made, or missed): arm the
+        next, or finish. Sets Record back to Recording (armed) by itself."""
+        s = self._rec_series
+        if s is None:
+            return
+        s['made'] += 1
+        if s['made'] >= s['count']:
+            self._rec_series = None
+            self._rec_series_run_s = None
+            self._recording_status.setText(
+                (self._recording_status.text() + "   ").lstrip()
+                + f"(series complete: {s['count']} recordings)")
+            return
+        k, st, run = self._series_plan(s['anchor'], s['mode'], s['interval'],
+                                       s['dur'], time.time(), s['utc'])
+        if k <= s['k']:                          # never the same slot twice
+            k = s['k'] + 1
+            st = self._series_start(s['anchor'], s['mode'], s['interval'], k, s['utc'])
+            run = s['dur']
+        s['k'] = k
+        self._rec_series_run_s = run
+        self.record = 1
+        self._record_callback(1)
+        self._arm_scheduled_start(st)
+
+    def _on_rec_repeat_changed(self, *_):
+        self._rec_repeat_mode = self._rec_repeat_combo.currentData() or 'once'
+        self._rec_repeat_count = int(self._rec_repeat_count_spin.value())
+        self._rec_repeat_custom = self._rec_repeat_custom_edit.text().strip()
+        self._rec_repeat_custom_edit.setVisible(self._rec_repeat_mode == 'custom')
+        self._rec_repeat_count_spin.setEnabled(self._rec_repeat_mode != 'once')
+        self._save_setting('recording', 'rec_repeat', self._rec_repeat_mode)
+        self._save_setting('recording', 'rec_repeat_count', self._rec_repeat_count)
+        self._save_setting('recording', 'rec_repeat_custom', self._rec_repeat_custom)
 
     @staticmethod
     def _sanitize_name(name):
@@ -10499,6 +11023,10 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         countdown counter, turn the status indicator red, and arm the auto-stop."""
         self._rec_start_time = time.monotonic()
         self._rec_duration_s = self._parse_duration_s(self._rec_duration_text)
+        if self._rec_series is not None and self._rec_series_run_s:
+            # In a series the END is what is scheduled: a late start (the
+            # computer was asleep) records the rest of its window only.
+            self._rec_duration_s = max(1, int(round(self._rec_series_run_s)))
         self._begin_realtime_mode()                 # suppress GC / timer stalls
         self._processor.set_recording_active(True)  # yield display CPU to the sink
         self._recording_status.setStyleSheet(
@@ -10507,6 +11035,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._source_name_widget.setEnabled(False)        # locked in for this file
         self._rec_duration_widget.setEnabled(False)
         self._rec_start_widget.setEnabled(False)
+        self._rec_repeat_widget.setEnabled(False)
         self._rec_elapsed_label.setStyleSheet(
             "color: #e74c3c; font-weight: bold;")          # red REC (amber while armed)
         self._rec_elapsed_label.setVisible(True)
@@ -10524,6 +11053,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._source_name_widget.setEnabled(True)
         self._rec_duration_widget.setEnabled(True)
         self._rec_start_widget.setEnabled(True)
+        self._rec_repeat_widget.setEnabled(True)
         self._rec_elapsed_label.setVisible(False)
         self._rec_elapsed_label.setText("")
 
@@ -10567,13 +11097,20 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
                 self._recording_status.setToolTip(
                     "\n".join(sink._writer.paths))
         elapsed = time.monotonic() - self._rec_start_time
-        gaps = self._rec_gap_suffix()
+        gaps = self._rec_gap_suffix() + self._series_suffix()
         if self._rec_duration_s > 0:
             if elapsed >= self._rec_duration_s:
                 self._rec_elapsed_label.setText(
                     "⏺ REC  " + self._fmt_hms(self._rec_duration_s)
                     + " / " + self._fmt_hms(self._rec_duration_s) + gaps)
-                self.set_record(0)          # target reached -> stop_recording
+                # In a series this stop is the series' own: keep it alive
+                # through the teardown, then arm the next recording.
+                self._rec_series_advancing = self._rec_series is not None
+                try:
+                    self.set_record(0)      # target reached -> stop_recording
+                finally:
+                    self._rec_series_advancing = False
+                self._series_continue()
                 return
             self._rec_elapsed_label.setText(
                 "⏺ REC  " + self._fmt_hms(elapsed)

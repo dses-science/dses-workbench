@@ -104,11 +104,63 @@ def test_helpers():
           "duration parser unchanged (feeds the delay form)")
 
 
+def test_series():
+    """Repeating schedule (2026-11-19): the timing arithmetic. A wrong start
+    here records the wrong patch of sky for days with nobody watching."""
+    print("\n4. repeating series: intervals, starts, the plan")
+    W = A.dses_workbench
+    I, S, PL = W._repeat_interval_s, W._series_start, W._series_plan
+    sid = I('sidereal')
+    check(abs(sid - 86164.0905) < 1e-6 and I('solar') == 86400.0, "sidereal 86164.0905 s, solar 86400 s")
+    check(I('custom', "24:50:28") == 89428.0 and I('custom', "1500") == 90000.0, "custom H:MM:SS and plain minutes")
+    for bad in ("", "0:00:30", "nonsense"):
+        try:
+            I('custom', bad); check(False, f"custom {bad!r} rejected")
+        except ValueError:
+            check(True, f"custom {bad!r} rejected")
+    a = utc(2026, 11, 18, 22, 20)                     # Ray's plane crossing, 22:20 UT
+    check(S(a, 'sidereal', sid, 0) == a, "recording 0 starts at the anchor")
+    d1 = a + 86400 - S(a, 'sidereal', sid, 1)
+    check(abs(d1 - 235.9095) < 1e-3, "next sidereal start is 3 m 55.91 s earlier by the clock", f"{d1:.4f} s")
+    d30 = a + 30 * 86400 - S(a, 'sidereal', sid, 30)
+    check(abs(d30 - 30 * 235.9095) < 1e-2, "30 days on: 1 h 57 m 57 s earlier, no accumulated error", f"{d30:.2f} s")
+    check(S(a, 'solar', 86400.0, 7) == a + 7 * 86400, "solar (UTC): same clock time a week on")
+    # local solar day keeps the WALL-CLOCK time whatever the UTC offset does
+    loc = time.mktime((2026, 10, 30, 21, 15, 0, 0, 1, -1))
+    st5 = time.localtime(S(loc, 'solar', 86400.0, 5, utc=False))
+    check((st5.tm_mon, st5.tm_mday, st5.tm_hour, st5.tm_min) == (11, 4, 21, 15),
+          "solar (local): 21:15 stays 21:15 across a daylight-saving change",
+          time.strftime("%Y-%m-%d %H:%M", st5))
+    dur = 3 * 3600.0
+    k, st, run = PL(a, 'sidereal', sid, dur, a - 600)
+    check((k, st, run) == (0, a, dur), "before the first start: wait for it, full length")
+    k, st, run = PL(a, 'sidereal', sid, dur, a + 1800)
+    check(k == 0 and st == a + 1800 and abs(run - (dur - 1800)) < 1e-6,
+          "woken 30 min into a window: start now, end on schedule", f"run {run:.0f} s")
+    k, st, run = PL(a, 'sidereal', sid, dur, a + dur - 20)
+    check(k == 1 and st == a + sid and run == dur, "20 s left in a window is not worth a file: the next one")
+    k, st, run = PL(a, 'sidereal', sid, dur, a + dur + 5)
+    check(k == 1 and st == a + sid, "between recordings: the next start")
+    # a restart ten days later with the original anchor re-entered. Start 10
+    # fell 39 m 19 s before the tenth clock day, and its window is 3 h long.
+    now = a + 10 * 86400 + 4 * 3600                   # after window 10 has closed
+    k, st, run = PL(a, 'sidereal', sid, dur, now)
+    check(k == 11 and abs(st - (a + 11 * sid)) < 1e-6 and run == dur and st > now,
+          "resume from the original anchor: the next sidereal start, same phase", f"k={k}")
+    now = a + 10 * 86400 + 3600                       # still inside window 10
+    k, st, run = PL(a, 'sidereal', sid, dur, now)
+    check(k == 10 and st == now and abs(run - (a + 10 * sid + dur - now)) < 1e-6,
+          "resume inside a window: record the rest of it", f"run {run:.0f} s")
+    k, st, run = PL(a, 'sidereal', sid, 2.0, a + 100.0)
+    check(k == 1, "a 2 s test recording: the half-length rule, not the 60 s one")
+
+
 if __name__ == "__main__":
     print("RECORDING SCHEDULE TESTS")
     test_parser()
     test_parser_local()
     test_helpers()
+    test_series()
     print()
     if FAILURES:
         print(f"{len(FAILURES)} FAILURE(S): " + ", ".join(FAILURES))

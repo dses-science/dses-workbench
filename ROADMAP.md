@@ -6,6 +6,67 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## v1.8.0 — ON MAIN, NOT CUT (2026-11-19, Windows session; Rick: "Yes, build it")
+
+Feature release (second digit) when cut. Both items come from Ray Uberecken
+(AA0L, HackRF, 10-ft dish): his 2026-11-18 screenshots of the Workbench 1.7.0
+beside SDR Console 3.3, and his ask for a schedule that follows the sky.
+
+- [x] **Trace detector: bins to pixels by mean power** (the spectrum plot).
+      Ray's pictures, digitized (HI_and_Drift_Scan/analysis_2026-11/
+      ray_sdrconsole/): the same hydrogen hump at 1420.33 MHz in both
+      programs, a thin +0.47 dB line in SDR Console, buried in a 0.57 dB-thick
+      band in the Workbench. Cause: the plot let pyqtgraph reduce bins to
+      pixels by PEAK, i.e. it drew the highest and lowest of the ~91 bins
+      (65536-pt FFT) under each pixel column; to thin that band he ran a
+      minute-long average, which is the "not real time" that 1.7.0's coverage
+      fix could not cure. New **Trace** control (FFT group; `[spectrum]
+      trace_detector`): *Average* (default) = mean POWER per pixel column for
+      the bins in view, recomputed on every frame, zoom, pan and resize;
+      *Peak* = the old envelope; *Average + peak* = the mean line over a
+      faint envelope. Two bins or fewer per pixel: every bin drawn as it is.
+      Sweep passes `detector='peak'` (an RFI survey must not average a narrow
+      carrier away); Max/Min hold traces keep peak reduction. On Ray's exact
+      screen the scatter drops from the 0.57 dB band to 0.013 dB.
+- [x] **Line view** (button at the top of the Spectrum Display panel, View
+      menu, Ctrl+L; closes the "watch the line" item from the 1.7.0 arc):
+      FFT size nearest 1 kHz RBW at the current rate (2 MS/s -> 2048, 6 and
+      8 MS/s -> 8192, 16 MS/s -> 16384), Avg alpha 0.05, Smooth 9 bins, Trace
+      Average, holds off, DC spike removed, zoom to +-0.9 MHz around
+      1420.406 MHz when the span is wide enough, and a tight Y fit 4 s later
+      (1st to 99.5th percentile plus a quarter: a narrow carrier runs off the
+      top). Toggling it off restores what was there. Baseline is left alone
+      (SDR Console does not flatten; with a 2 MHz span a median wide enough
+      to spare the line flattens nothing).
+- [x] **Repeating recording schedule** (Recording panel, **Repeat** under
+      Start at; `[recording] rec_repeat`, `rec_repeat_count`,
+      `rec_repeat_custom`): Once / Every sidereal day (86164.0905 s, each
+      start 3 m 55.91 s earlier by the clock) / Every solar day (same clock
+      time; on the Local clock it keeps the wall-clock time across a DST
+      change) / Custom interval (H:MM:SS, e.g. 24:50:28 for the Moon's mean
+      day). Each recording is Record for long, xN of them, every start
+      counted from the first so nothing drifts. Auto-stop re-arms the next
+      start (amber "recording 3 of 14 starts at ..."); a late wake-up inside
+      a window records the rest of it and still ends on schedule; a start
+      that cannot record is skipped; Stopped cancels the series. Not
+      persisted: after a restart the first start's date and time (in the
+      armed status tooltip) goes back into Start at and the series resumes at
+      the next one due.
+- Tests: `test_trace_detector.py` (29 checks, headless plot widget, Ray's
+  numbers), `test_rec_schedule.py` (+19 series arithmetic checks),
+  `test_rec_series.py` (28 checks: a compressed three-recording series
+  through the real window with a stub recorder). Regression suites pass.
+- [ ] Not yet verified on a radio: Line view on a live HackRF-class stream,
+      and a real multi-day series. The unexplained half-height of the
+      Workbench hump in Ray's pictures needs a controlled check (same gains,
+      alternate within a minute).
+- [ ] Follow-ons: object-aware repeat for the Moon and planets (transit
+      computed per day instead of a fixed spacing); persisting a running
+      series across a restart; a GUI redesign toward a traditional menu +
+      toolbars layout (Rick, 2026-11-19 — design proposal first).
+- Before a cut: version bump, Installing.md section 9 regen from the Help
+  (Trace, Line view, Repeat bullets), guide PDF, Release Workflow PDFs.
+
 ## v1.7.0 — SHIPPED 2026-11-05 (cut + published from Windows, release commit adf24a8, tag v1.7.0; landed 2026-11-04, Rick: "Yes, both"; cut on Rick: "Do it all now")
 
 Feature release (second digit). The display and the pulsar recorder move
