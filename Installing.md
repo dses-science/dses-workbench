@@ -1,6 +1,6 @@
 # DSES Radio Astronomy Workbench — Installation Guide
 
-**Version 1.7.0**
+**Version 1.8.0**
 Author: Richard M Hambly (K0GD) — k0gd@cnssys.com
 License: GPL-3.0-or-later
 
@@ -150,16 +150,16 @@ Accept the prompt; conda downloads and installs the three packages. If the launc
 
 Download the application from the distribution site. You can either use the direct links below, or browse the folder <https://gpstime.com/sw_distribution/dses-workbench/> and pick the newest `dses-workbench-*.zip`:
 
-- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.7.0.zip>
+- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.8.0.zip>
 - **This guide (PDF):** <https://gpstime.com/sw_distribution/dses-workbench/DSES_Radio_Astronomy_Workbench_Installation.pdf>
 
 The zip is roughly 60 MB — it includes a short sample recording so the program can run in playback mode when no radio is attached. (Replace the version number in the link if a later release has been published.)
 
-**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.7.0`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
+**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.8.0`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
 
 ### 3.1 Windows 11
 
-1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.7.0 fixed that.) The extracted folder is named for the version, `dses-workbench-1.7.0\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.8.0 fixed that.) The extracted folder is named for the version, `dses-workbench-1.8.0\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
@@ -178,8 +178,8 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
    ```bash
    mkdir -p ~/Applications && cd ~/Applications
-   unzip ~/Downloads/dses-workbench-1.7.0.zip
-   mv dses-workbench-1.7.0 dses-workbench
+   unzip ~/Downloads/dses-workbench-1.8.0.zip
+   mv dses-workbench-1.8.0 dses-workbench
    cd dses-workbench
    chmod +x launcher.sh
    ```
@@ -209,8 +209,8 @@ The steps are the same as Linux. Extract it into your personal **`~/Applications
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-unzip ~/Downloads/dses-workbench-1.7.0.zip
-mv dses-workbench-1.7.0 dses-workbench
+unzip ~/Downloads/dses-workbench-1.8.0.zip
+mv dses-workbench-1.8.0 dses-workbench
 cd dses-workbench
 chmod +x launcher.sh
 ./launcher.sh
@@ -690,6 +690,8 @@ Sweep runs continuously, redrawing the wide trace after each pass; the waterfall
 
 - **Start at**: optional scheduled start — a clock time (`03:15`, the next time it comes round), a delay (`+30` minutes, `+1:30`), or a full date (`2026-10-24 03:15`), read as UTC or your local clock per the selector beside it. Setting **Record** to *Recording* then *arms* instead of starting: the status turns amber, the counter shows a countdown to the start (and, with **Record for**, the planned end), the source-visibility and hydrogen-line questions are asked up front so the start itself needs nobody at the keyboard, and *Stopped* cancels. Blank starts at once.
 
+- **Repeat**: make the same recording again and again with the start moving by itself. *Every sidereal day* spaces the starts 23 h 56 m 04 s apart, so each one begins 3 m 56 s earlier by the clock and the same patch of sky is overhead every time: the galactic plane crossing of a fixed dish, a pulsar, any source with a fixed place among the stars. *Every solar day* keeps the same clock time (the Sun). *Custom interval* takes your own spacing as `H:MM:SS` — `24:50:28` follows the Moon's average day, though the Moon and the planets wander against any fixed spacing over a few weeks. Each recording is **Record for** long (required here), **×N** sets how many, and the first start is **Start at** (or now when that is blank); every later start is counted from the first one, so the spacing never drifts. The amber status shows which recording is next (*3 of 14*) and when. If the computer wakes up inside a recording's window, the rest of that window is recorded and it still ends on schedule; a recording that cannot start (no radio) is skipped and the series goes on. *Stopped* cancels the whole series. The series lives in the running program: after a restart, put the first start's date and time back into **Start at** (hover the amber status to read it) with the same Repeat setting, and it resumes at the next one due.
+
 - **Record**: *Stopped* / *Recording*. Recording always starts *Stopped* on launch. While recording, a red **REC** counter shows elapsed time (or the countdown when a duration is set).
 
 - **Analyze when done** / **Quick look** (filterbank + PRESTO): when a `.fil` recording stops, the canned PRESTO pipeline runs automatically — `readfile` sanity, an `rfifind` RFI mask, band-edge zapping, and a `prepfold` fold — by catalog pulsar when Source is a known designation (the **Fold P (ms)** / **Fold DM** boxes then preview its catalogue values and lock, and the fold uses the pulsar's full ephemeris), or at a manual **Fold P (ms)** for a source with no catalogue entry (e.g. the lab pulsar simulator) — and delivers a **self-contained PDF** next to the recording: chart, commands, numbers, and a plain-language verdict. Verdicts are honest about failure modes: a periodicity that optimizes to DM ≈ 0 is reported as a *terrestrial signal*, not a detection, and "no detection" explicitly does not mean a bad recording. **Quick look** does the same on a snapshot of the still-growing file mid-recording, without interrupting it. Requires PRESTO (Mac/Linux: native install; Windows: WSL via `presto/build_presto.sh`).
@@ -707,6 +709,10 @@ Live FFT magnitude in dB. The FFT itself runs inside the GNU Radio flowgraph (co
 - **Avg α**: exponential averaging across display updates (each update is already the mean of every FFT block since the previous one). 1.0 = no smoothing (every frame is a fresh measurement). Smaller = more smoothing; the ≈N readout is the effective number of frames averaged. For watching a weak line (the hydrogen line is a few tenths of a dB on a small dish) use ≈0.02–0.05 with **Baseline: Flatten** below.
 
 - **DC suppress**: hides the zero-IF DC / LO-leakage spike that HackRF, RTL-SDR and similar radios put at the tuned centre by bridging the window's main lobe around the centre bin with its neighbours. Display only — the recorders always get the raw stream.
+
+- **Trace**: how the trace is drawn when there are more FFT bins than screen pixels (any large FFT size). *Average* (the default) draws the mean power of the bins under each pixel: a thin line, the way SDR Console draws it, in which a weak broad line stands out without a long time average. *Peak* draws the highest and lowest bin under each pixel — a band as thick as the noise (at 65536 points it can be thicker than the hydrogen line is tall), but the weakest *narrow* carrier still shows, so use it for RFI hunting; Sweep always uses it, and so do the Max/Min hold traces. *Average + peak* draws the thin line over a faint peak band. Zoom in until there are two bins or fewer per pixel and every bin is drawn as it is, whatever this is set to.
+
+- **Line view** (the button at the top of the panel, View menu, Ctrl+L): one click to *watch* a spectral line change in shape and height. It picks the FFT size that gives about 1 kHz resolution at the current sample rate, sets Avg α to 0.05 (about a two-second response), Smooth to 9 bins, Trace to Average, turns the holds off, zooms to ±0.9 MHz around 1420.406 MHz when the hydrogen line is in a wide enough band, and a few seconds later fits the Y axis closely around the middle of the trace (a narrow carrier and the band edges may run off the plot rather than flatten the line). Click it again to get back the settings you had. Why these numbers: the scatter of a trace falls as 1/√(resolution × time), so a 30 Hz bin needs fifty times the averaging of a 1.5 kHz one for the same smoothness — fine resolution is for narrow carriers, not for a line a hundred kilohertz wide. Baseline is left as you set it; add **Flatten** or a stored reference if you want the bandpass removed as well.
 
 - **Baseline**: removes the receiver's bandpass shape so a weak line stands up from a flat floor near 0 dB. *Off*: raw spectrum. *Reference (ON/OFF)*: point at empty sky, click **Store reference (OFF)**, then point at the source — the plot shows the difference. *Flatten (median)*: subtracts a wide running-median estimate of the bandpass in real time with no reference needed; set **Flatten width** several times wider than the feature you want to keep (a 1 MHz hydrogen profile at 8 MS/s and 4096 points is ~500 bins, so ~1501 bins). Either mode auto-fits the Y axis to the flattened trace. This plus a low Avg α is the "watch the line" view; the ezRA drift-scan recording is unaffected by any of it.
 

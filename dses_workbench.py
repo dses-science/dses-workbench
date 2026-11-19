@@ -153,7 +153,7 @@ import time
 
 # === App metadata ===
 APP_NAME        = "DSES Radio Astronomy Workbench"
-APP_VERSION     = "1.7.0"
+APP_VERSION     = "1.8.0"
 APP_AUTHOR      = "Richard M Hambly (K0GD)"
 APP_AUTHOR_EMAIL = "k0gd@cnssys.com"
 APP_COPYRIGHT   = "Copyright © 2026 Richard M Hambly (K0GD)"
@@ -1397,8 +1397,8 @@ class FftPlotWidget(QtWidgets.QWidget):
             "removed\n"
             "• the view zoomed to ±0.9 MHz around 1420.406 MHz when that is "
             "in band\n"
-            "• a tight Y fit a few seconds later (a narrow carrier runs off "
-            "the top)\n"
+            "• a tight Y fit a few seconds later, to the middle of the view (a "
+            "narrow carrier and the band edges may run off the plot)\n"
             "Click again to put back the settings you had. Baseline is left "
             "as you set it.")
         self._line_view_btn.toggled.connect(self._on_line_view_toggled)
@@ -1905,7 +1905,12 @@ class FftPlotWidget(QtWidgets.QWidget):
             return
         (x0, x1), _yr = self._plot.getPlotItem().getViewBox().viewRange()
         x = np.asarray(x, dtype=float); y = np.asarray(y, dtype=float)
-        y = y[(x >= x0) & (x <= x1) & np.isfinite(y)]
+        # Fit to the middle 80% of the view: a radio's band edges roll off
+        # (or rise) by several dB and would otherwise set the scale (first
+        # live try on a B210 at 2 MS/s fitted 6 dB around a 0.5 dB target).
+        # Like the carrier, the edges may run off the plot.
+        xc, half = 0.5 * (x0 + x1), 0.4 * (x1 - x0)
+        y = y[(x >= xc - half) & (x <= xc + half) & np.isfinite(y)]
         if len(y) < 8:
             return
         lo, hi = np.percentile(y, [1.0, 99.5])
@@ -3757,8 +3762,9 @@ height. It picks the FFT size that gives about 1 kHz resolution at the
 current sample rate, sets Avg α to 0.05 (about a two-second response),
 Smooth to 9 bins, Trace to Average, turns the holds off, zooms to ±0.9 MHz
 around 1420.406 MHz when the hydrogen line is in a wide enough band, and a
-few seconds later fits the Y axis closely around the trace (a narrow carrier
-runs off the top rather than flattening the line). Click it again to get
+few seconds later fits the Y axis closely around the middle of the trace (a
+narrow carrier and the band edges may run off the plot rather than flatten
+the line). Click it again to get
 back the settings you had. Why these numbers: the scatter of a trace falls
 as 1/√(resolution × time), so a 30 Hz bin needs fifty times the averaging
 of a 1.5 kHz one for the same smoothness — fine resolution is for narrow

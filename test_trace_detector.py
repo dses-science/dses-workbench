@@ -176,7 +176,9 @@ frame2 = (-95.3 + 1.2 * ((f2 - CENTER) / 1e6) ** 4
 frame2[int(np.argmin(np.abs(f2 - 1420.0e6)))] += 6.0
 w.on_frame(frame2, None, None); pump(400)
 y0, y1 = vb.viewRange()[1]
-ok(1.0 < (y1 - y0) < 3.2 and y0 < -95.3 and y1 > -94.3, f"tight Y fit gave {y0:.2f}..{y1:.2f}")
+# fitted to the middle 80% of the view: the hump stays inside, the band edges may not
+ok(0.5 < (y1 - y0) < 2.0 and y0 < -95.3 and y1 > -94.80, f"tight Y fit gave {y0:.2f}..{y1:.2f}")
+ok(y1 < frame2[:40].mean(), "the rising band edge should be allowed to run off the top")
 ok(y1 < frame2.max() - 2.0, "the narrow carrier should run off the top of a tight fit")
 ok(seen == [True], f"line_view_changed emitted {seen}")
 if RENDER:
