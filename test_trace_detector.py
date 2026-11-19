@@ -183,6 +183,22 @@ ok(y1 < frame2.max() - 2.0, "the narrow carrier should run off the top of a tigh
 ok(seen == [True], f"line_view_changed emitted {seen}")
 if RENDER:
     w._plot.grab().save(os.path.join(RENDER, "line_view_2Msps.png"))
+# a STRONG carrier is not narrow on the screen: window + smoothing + skirts cover
+# many pixels (live on a B210 a -80 dBm tone set a 53 dB scale). It must be
+# dropped from the fit with its skirts, and the hump must stay in view.
+frame3 = frame2.copy()
+skirt = 45.0 * np.exp(-np.abs(f2 - 1420.0e6) / 12e3) + 8.0 / (1.0 + ((f2 - 1420.0e6) / 30e3) ** 2)
+frame3 = 10 * np.log10(10 ** (frame3 / 10) + 10 ** ((-95.3 + skirt) / 10) - 10 ** (-95.3 / 10))
+wide = int((frame3 > np.median(frame3) + 1.0).sum())
+w.on_frame(frame3, None, None); pump(60)
+w._autoscale_y_tight(); pump(60)
+y0, y1 = vb.viewRange()[1]
+ok(wide > 40, f"test carrier only {wide} bins wide above +1 dB")
+ok((y1 - y0) < 2.5 and y0 < -95.3 and y1 > -94.80,
+   f"strong carrier with skirts ({wide} bins above +1 dB): Y fit {y0:.2f}..{y1:.2f}")
+ok(y1 < frame3.max() - 30.0, "the strong carrier must run off the top")
+print(f"6a2. a +45 dB carrier with skirts {wide} bins wide is left out of the fit: {y0:.2f}..{y1:.2f} dB")
+w.on_frame(frame2, None, None); pump(60)
 print(f"6a. Line view on: FFT 2048, alpha 0.05, smooth 9, average, holds off; Y fitted to {y0:.2f}..{y1:.2f} dB")
 w.set_line_view(False); pump()
 after = (w._fft_size_combo.currentData(), w._avg_slider.value(), w._smooth_spin.value(),

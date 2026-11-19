@@ -1206,6 +1206,8 @@ class FftPlotWidget(QtWidgets.QWidget):
     LINE_VIEW_SMOOTH_BINS = 9            # ~9 kHz = ~2 km/s at 1420 MHz
     LINE_VIEW_HALF_SPAN_HZ = 0.9e6       # +-190 km/s around the line
     LINE_VIEW_SETTLE_MS = 4000           # then fit Y tightly, once
+    LINE_VIEW_CARRIER_DB = 6.0           # taller than this over the median = a carrier
+    LINE_VIEW_SKIRT_DB = 1.0             # ...dropped from the fit out to this level
 
     def __init__(self, center_freq, samp_rate, parent=None):
         super().__init__(parent)
@@ -1913,6 +1915,25 @@ class FftPlotWidget(QtWidgets.QWidget):
         y = y[(x >= xc - half) & (x <= xc + half) & np.isfinite(y)]
         if len(y) < 8:
             return
+        # A strong carrier is not narrow on the screen: with the window, the
+        # 9-bin smooth and its own skirts a -80 dBm tone covered enough
+        # pixels to beat the percentile and set a 53 dB scale (live on the
+        # B210, 2026-11-19, minutes after 1.8.0 first went up). So drop every
+        # stretch of the trace that rises more than LINE_VIEW_CARRIER_DB
+        # above the median, out to where it comes back within
+        # LINE_VIEW_SKIRT_DB of it. No hydrogen line is that tall; a line
+        # that merely tops 1 dB is never dropped unless it touches a carrier.
+        med = float(np.median(y))
+        seed = y > med + self.LINE_VIEW_CARRIER_DB
+        if seed.any():
+            above = (y > med + self.LINE_VIEW_SKIRT_DB).astype(np.int8)
+            edges = np.flatnonzero(np.diff(np.concatenate(([0], above, [0]))))
+            keep = np.ones(len(y), dtype=bool)
+            for a, b in zip(edges[::2], edges[1::2]):
+                if seed[a:b].any():
+                    keep[a:b] = False
+            if int(keep.sum()) >= 8:
+                y = y[keep]
         lo, hi = np.percentile(y, [1.0, 99.5])
         span = max(float(hi - lo), 0.3)
         self._plot.setYRange(float(lo) - 0.25 * span, float(hi) + 0.25 * span,
