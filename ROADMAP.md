@@ -68,9 +68,22 @@ beside SDR Console 3.3, and his ask for a schedule that follows the sky.
       with the carrier 40 dB off the top). The same tone reads +62.2 dB over
       the floor in Peak and +42.9 dB in Average at 178 bins per pixel. The
       zip was replaced in place (first sha 3a9676b4, final f9585c26).
-- [ ] Still open: Line view on a HackRF-class radio in Ray's hands, a real
-      multi-day series, and the unexplained half-height of the Workbench hump
-      in his pictures (same gains, alternate within a minute).
+- [x] **Line-simulator bench** (`tools/siggen_line_test.py`, 2026-11-19, E4438C
+      noise-FM hump into the B210, the real window measured): the drawn hump
+      height follows a level ladder within 4% from +18 to +4 dB and reads
+      slightly high, never low, below that (generator accuracy) at both
+      Ray's settings and Line view; a new hump is 90% drawn in 4.5 s in Line
+      view against 67.6 s at alpha 0.003; and the same hump shrinks from
+      2.6 dB to 0.4 dB to nothing as RX gain drops from 40 to 30 to 20 dB.
+- [ ] **HackRF gain stages** (from that bench: gain, not the display, is the
+      live suspect for Ray's half-height hump). The Workbench hands a HackRF
+      one overall gain and SoapyHackRF splits it; SDR Console exposes LNA /
+      VGA / amp. Show the stages in the Radio panel and let them be set, and
+      add a gain check that steps the gain and reports where the on-screen
+      floor stops rising dB for dB (below that the radio's own noise is
+      what is displayed).
+- [ ] Still open: Line view on a HackRF-class radio in Ray's hands, his RX
+      Gain value, and a real multi-day series.
 - [ ] Follow-ons: object-aware repeat for the Moon and planets (transit
       computed per day instead of a fixed spacing); persisting a running
       series across a restart; a GUI redesign toward a traditional menu +
