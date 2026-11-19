@@ -75,13 +75,24 @@ beside SDR Console 3.3, and his ask for a schedule that follows the sky.
       Ray's settings and Line view; a new hump is 90% drawn in 4.5 s in Line
       view against 67.6 s at alpha 0.003; and the same hump shrinks from
       2.6 dB to 0.4 dB to nothing as RX gain drops from 40 to 30 to 20 dB.
-- [ ] **HackRF gain stages** (from that bench: gain, not the display, is the
-      live suspect for Ray's half-height hump). The Workbench hands a HackRF
-      one overall gain and SoapyHackRF splits it; SDR Console exposes LNA /
-      VGA / amp. Show the stages in the Radio panel and let them be set, and
-      add a gain check that steps the gain and reports where the on-screen
+- [x] **Per-stage gain for SoapySDR radios — the HackRF was capped at 47 dB**
+      (ON MAIN 2026-11-19, not cut: a 1.8.1 candidate). Ray: "I run the only
+      gain I can find at 47dB." The table gave a HackRF (0, 47) and one
+      overall number went to the driver; SDR Console ran the same radio at
+      LNA 40 + VGA 26 = 66 dB with the amp off, which the overall number
+      cannot reach. With the bench's gain ladder this is the explanation to
+      beat for his half-height line. Now `SOAPY_STAGE_GAINS` names the
+      drivers set stage by stage (HackRF: the slider = LNA + VGA, 0-102 dB,
+      LNA filled first; AMP separate), the Radio panel shows a Stages row
+      (LNA 0-40 by 8, VGA 0-62 by 2, AMP 0/14), a box edit never reshuffles
+      the split, and the stage values are saved. `test_gain_stages.py` (31
+      checks, stand-in driver + real window); per-element calls proven live
+      on the RSP1B. Not tested on a HackRF — none in the lab.
+- [ ] A gain check that steps the gain and reports where the on-screen
       floor stops rising dB for dB (below that the radio's own noise is
-      what is displayed).
+      what is displayed). Other multi-stage drivers (Airspy LNA/MIX/VGA,
+      Lime, BladeRF) could join `SOAPY_STAGE_GAINS` once someone can test
+      them; Airspy's overall number is a calibrated table and stays.
 - [ ] Still open: Line view on a HackRF-class radio in Ray's hands, his RX
       Gain value, and a real multi-day series.
 - [ ] Follow-ons: object-aware repeat for the Moon and planets (transit

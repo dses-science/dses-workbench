@@ -3620,7 +3620,18 @@ combo clears when the active rate isn't one of the presets.</li>
 matches what the driver reports (e.g. B210: 0–76 dB on the AD9361 gain
 table; SDRPlay: 0–48 dB, internally inverted so higher = stronger signal;
 RTL-SDR: 0–49.6 dB). AGC, if the driver defaults it on, is disabled at
-startup so the slider always takes effect.</li>
+startup so the slider always takes effect. A <b>HackRF</b> has three gain
+stages and gets a <b>Stages</b> row under the slider with a box for each:
+<b>LNA</b> (0–40 dB in steps of 8), <b>VGA</b> (0–62 dB in steps of 2) and
+<b>AMP</b> (the front-end amplifier, 14 dB or off). The slider is the sum of
+LNA and VGA and fills the LNA first, because that stage sets the noise
+figure; the boxes set a stage directly, and AMP is never touched by the
+slider. These are the same three numbers SDR Console shows. Through 1.8.0
+the HackRF had a single slider that stopped at 47 dB. How to tell the gain
+is high enough for weak-signal work: raise it until the noise floor on the
+screen rises dB for dB with the gain. Below that point the radio's own noise
+is most of what you are looking at, and a weak line is drawn shorter than it
+is.</li>
 <li><b>Antenna</b>: appears only when the open radio has more than one RF
 input. For a B210 this lists all four physical connectors as
 <code>A : RX2</code>, <code>A : TX/RX</code>, <code>B : RX2</code>,
@@ -4535,6 +4546,16 @@ SOAPY_DEFAULTS = {
 # the rate on the idle device, and restarts it with a fresh buffer.
 SOAPY_RATE_CHANGE_RESTARTS = ('plutosdr',)
 
+# Drivers whose gain is set stage by stage instead of through the driver's
+# single overall number: driver -> the stages the RX Gain slider stands for,
+# in the order it fills them. Any other stage the device reports (the
+# HackRF's AMP) gets its own control and is never touched by the slider.
+# See SoapyGenericSource._discover_gain_stages for why.
+SOAPY_STAGE_GAINS = {'hackrf': ('LNA', 'VGA')}
+# The hardware's own steps, used when the driver reports none (the RSP1B's
+# driver reports a step of 0 for both of its stages; measured 2026-11-19).
+SOAPY_STAGE_STEPS = {'hackrf': {'LNA': 8.0, 'VGA': 2.0, 'AMP': 14.0}}
+
 
 # --- Observation presets: validated parameter bundles keyed by observing
 # goal. Each entry is (label, settings-dict-or-None); None = Manual (touch
@@ -4675,6 +4696,7 @@ class SoapyGenericSource(RadioSource):
             [''],                    # tune_args per channel
             [''],                    # other_settings per channel
         )
+        self._discover_gain_stages()     # may widen self.gain_range
         # Clamp samp_rate to what the driver supports if known.
         if self.samp_rate_options and samp_rate not in self.samp_rate_options:
             # Pick the closest supported rate ≤ requested.
@@ -4696,14 +4718,17 @@ class SoapyGenericSource(RadioSource):
         # gr-soapy's set_gain(channel, value) takes overall gain in dB.
         # Some drivers (notably SDRPlay) expose multiple gain stages; the
         # overall setter applies the SoapySDR generic distribution.
-        try:
-            self.block.set_gain(0, self._driver_gain(float(gain)))
-        except Exception as exc:
-            # Some Soapy drivers fail on overall set_gain when only named
-            # stages exist; don't kill the whole flow on a non-critical
-            # setter failure.
-            print(f"Soapy set_gain warning ({driver}): {exc}",
-                  file=sys.stderr)
+        if self.gain_stages:
+            self.set_gain(float(gain))       # our own split, stage by stage
+        else:
+            try:
+                self.block.set_gain(0, self._driver_gain(float(gain)))
+            except Exception as exc:
+                # Some Soapy drivers fail on overall set_gain when only named
+                # stages exist; don't kill the whole flow on a non-critical
+                # setter failure.
+                print(f"Soapy set_gain warning ({driver}): {exc}",
+                      file=sys.stderr)
 
         # RF input ports this radio exposes (single-port radios report one,
         # e.g. RSP1B → ['RX']; the RSPduo reports its two tuners). Apply the
@@ -4728,6 +4753,72 @@ class SoapyGenericSource(RadioSource):
         self.display_label = f"{nice_name} — {serial or '(no serial)'}"
         self.hw_info = (f"{nice_name} (s/n {serial})" if serial
                         else f"{nice_name} via SoapySDR ({driver})")
+
+    # --- Per-stage gain (1.8.1) ------------------------------------------
+    # Ray Uberecken, 2026-11-19: "I run the only gain I can find at 47dB."
+    # The table capped a HackRF at 47 dB and handed the driver ONE number,
+    # which SoapyHackRF splits about 2/3 LNA + 1/3 VGA and, above ~51 dB,
+    # by switching the front-end amplifier on. SDR Console ran the same
+    # radio at LNA 40 + VGA 26 with the amplifier off — a setting the single
+    # number cannot reach — and showed the hydrogen line twice as tall. For
+    # the drivers in SOAPY_STAGE_GAINS the stages are set one by one.
+
+    def _discover_gain_stages(self):
+        """Fill self.gain_stages = [(name, lo, hi, step), ...] for a driver
+        in SOAPY_STAGE_GAINS whose device reports every stage the policy
+        names; widen gain_range to the sum of those stages. Otherwise leave
+        the radio on the single overall gain."""
+        self.gain_stages = []
+        self._stage_order = ()
+        self._stage_values = {}
+        order = SOAPY_STAGE_GAINS.get(self._driver)
+        if not order:
+            return
+        try:
+            stages = []
+            for name in list(self.block.list_gains(0)):
+                rg = self.block.get_gain_range(0, name)
+                step = float(rg.step()) if hasattr(rg, 'step') else 0.0
+                if step <= 0:
+                    step = SOAPY_STAGE_STEPS.get(self._driver, {}).get(str(name), 1.0)
+                stages.append((str(name), float(rg.minimum()), float(rg.maximum()), step))
+        except Exception as exc:
+            print(f"Soapy gain stages not available ({self._driver}): {exc}",
+                  file=sys.stderr)
+            return
+        names = [s[0] for s in stages]
+        if not all(n in names for n in order):
+            return
+        self.gain_stages = stages
+        self._stage_order = tuple(order)
+        self._stage_values = {s[0]: s[1] for s in stages}
+        self.gain_range = (0.0, sum(s[2] for s in stages if s[0] in order), 1.0)
+
+    def set_gain_stage(self, name: str, db: float) -> float:
+        """Set one stage, snapped down to its step and clamped to its range.
+        Returns the value applied."""
+        for n, lo, hi, step in self.gain_stages:
+            if n == name:
+                v = max(lo, min(hi, lo + float(np.floor((float(db) - lo) / step + 1e-9)) * step))
+                try:
+                    self.block.set_gain(0, n, v)
+                except Exception as exc:
+                    print(f"Soapy set_gain warning ({self._driver} {n}): {exc}",
+                          file=sys.stderr)
+                self._stage_values[n] = v
+                return v
+        return 0.0
+
+    def stage_gain(self, name: str) -> float:
+        return float(self._stage_values.get(name, 0.0))
+
+    def slider_gain(self) -> float:
+        """What the RX Gain slider stands for: the sum of the policy's stages."""
+        return float(sum(self._stage_values.get(n, 0.0) for n in self._stage_order))
+
+    def total_gain(self) -> float:
+        """Every stage, the ones outside the slider (an amplifier switch) too."""
+        return float(sum(self._stage_values.values()))
 
     def _driver_gain(self, slider_db: float) -> float:
         """Translate the user-facing gain value (higher = more signal) into
@@ -4882,6 +4973,14 @@ class SoapyGenericSource(RadioSource):
     def set_gain(self, db: float) -> None:
         lo, hi, _ = self.gain_range
         db = max(lo, min(hi, float(db)))
+        if getattr(self, 'gain_stages', None):
+            # Fill the policy's stages in order (HackRF: the LNA first — it
+            # sets the noise figure — then the VGA); stages outside the
+            # policy (the amplifier switch) are left as they are.
+            left = db
+            for name in self._stage_order:
+                left -= self.set_gain_stage(name, left)
+            return
         try:
             self.block.set_gain(0, self._driver_gain(db))
         except Exception as exc:
@@ -7732,6 +7831,10 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._gain_win = RangeWidget(self._gain_range, self.set_gain, "RX Gain (dB)",
                                       "counter_slider", float, Qt.Horizontal)
         self._rx_group_layout.addWidget(self._gain_win)
+        # Per-stage gain boxes for radios driven stage by stage (HackRF).
+        self._gain_stage_spins = {}
+        self._gain_stage_widget = None
+        self._build_gain_stage_row(self._source)
 
         # --- Antenna / RF-input selector (only when the radio has >1 port) ---
         # B210: TX/RX vs RX2. RSPduo: tuner 1 vs 2. RSPdx: antenna A/B/C.
@@ -11154,10 +11257,100 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         if self._playback_mode or self._source is None:
             return  # no gain knob in playback mode
         self.gain = gain
+        staged = bool(getattr(self._source, 'gain_stages', None))
+        if staged and abs(float(gain) - self._source.slider_gain()) < 0.5:
+            # The stages already add up to this (a restart re-applying the
+            # saved slider value, or the slider echoing a stage edit): leave
+            # the split the user chose alone.
+            self.gain = self._source.slider_gain()
+            self._processor.set_gain_db(self._source.total_gain())
+            return
         self._source.set_gain(self.gain)
+        if staged:
+            # The slider filled the stages (LNA first): show what each got,
+            # and let the slider read the sum actually applied (stages move
+            # in 8 dB and 2 dB steps on a HackRF).
+            self._sync_gain_stage_spins()
+            self.gain = self._source.slider_gain()
+            self._gain_win.set_value(self.gain)
+            self._processor.set_gain_db(self._source.total_gain())
+            self._save_setting('rx', 'gain_db', float(self.gain))
+            self._save_gain_stages()
+            return
         # Keep the dBm scale gain-independent (display-only; no effect on 'relative').
         self._processor.set_gain_db(float(gain))
         self._save_setting('rx', 'gain_db', float(gain))
+
+    # --- Per-stage gain (radios in SOAPY_STAGE_GAINS) -----------------------
+    def _gain_stage_key(self, name):
+        return f"gain_stage_{getattr(self._source, '_driver', 'radio')}_{name.lower()}"
+
+    def _build_gain_stage_row(self, src):
+        """A row of boxes under the RX Gain slider, one per gain stage the
+        radio reports (HackRF: AMP, LNA, VGA). Saved stage values are put
+        back first. No row for radios with a single overall gain."""
+        stages = getattr(src, 'gain_stages', None)
+        if not stages:
+            return
+        for name, lo, hi, step in stages:           # restore what was saved
+            saved = self._app_settings.get_float_or('rx', self._gain_stage_key(name), None)
+            if saved is not None:
+                src.set_gain_stage(name, saved)
+        self._gain_stage_widget = QtWidgets.QWidget(self)
+        row = QtWidgets.QHBoxLayout(self._gain_stage_widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QtWidgets.QLabel("Stages:"))
+        order = tuple(getattr(src, '_stage_order', ()))
+        for name, lo, hi, step in sorted(stages, key=lambda s: (s[0] not in order,
+                                         order.index(s[0]) if s[0] in order else 0, s[0])):
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setDecimals(0)
+            spin.setRange(lo, hi)
+            spin.setSingleStep(step)
+            spin.setPrefix(f"{name} ")
+            spin.setSuffix(" dB")
+            spin.setValue(src.stage_gain(name))
+            spin.setToolTip(
+                f"{name}: {lo:g} to {hi:g} dB in steps of {step:g}. "
+                + ("Part of the RX Gain slider, which fills "
+                   + " then ".join(order) + ". Setting it here moves the slider to the sum."
+                   if name in order else
+                   "Not part of the RX Gain slider: it stays as you set it. On a "
+                   "HackRF this is the front-end amplifier, 14 dB or off; leave it "
+                   "off unless the signal is weak and there is no preamplifier."))
+            spin.valueChanged.connect(lambda v, n=name: self._on_gain_stage_changed(n, v))
+            row.addWidget(spin, 1)
+            self._gain_stage_spins[name] = spin
+        self._rx_group_layout.addWidget(self._gain_stage_widget)
+        self.gain = src.slider_gain()
+        self._gain_win.set_value(self.gain)
+        self._processor.set_gain_db(src.total_gain())
+
+    def _sync_gain_stage_spins(self):
+        for name, spin in self._gain_stage_spins.items():
+            spin.blockSignals(True)
+            spin.setValue(self._source.stage_gain(name))
+            spin.blockSignals(False)
+
+    def _save_gain_stages(self):
+        for name in self._gain_stage_spins:
+            self._save_setting('rx', self._gain_stage_key(name),
+                               float(self._source.stage_gain(name)))
+
+    def _on_gain_stage_changed(self, name, value):
+        """One stage box edited: set that stage alone, then move the slider
+        to the sum WITHOUT letting it redistribute the stages."""
+        if self._playback_mode or self._source is None:
+            return
+        applied = self._source.set_gain_stage(name, value)
+        spin = self._gain_stage_spins.get(name)
+        if spin is not None and abs(spin.value() - applied) > 1e-6:
+            spin.blockSignals(True); spin.setValue(applied); spin.blockSignals(False)
+        self.gain = self._source.slider_gain()
+        self._gain_win.set_value(self.gain)          # no callback (set_value is silent)
+        self._processor.set_gain_db(self._source.total_gain())
+        self._save_setting('rx', 'gain_db', float(self.gain))
+        self._save_gain_stages()
 
     def set_antenna(self, name):
         if self._playback_mode or self._source is None:
