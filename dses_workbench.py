@@ -7894,6 +7894,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._processor = SpectrumProcessor(
             self._display, window_name=_win0,
             update_hz=10.0, gain_db=float(self.gain), parent=self)
+        if getattr(self._source, 'gain_stages', None):
+            # The stage row was built above, before this processor existed.
+            self._tell_processor_gain(self._source.total_gain())
         self._processor.frame_ready.connect(self._fft_plot.on_frame)
         self._processor.frame_ready.connect(self._waterfall_plot.on_frame)
         self._processor.frame_ready.connect(self._on_processor_frame_cache)
@@ -11263,7 +11266,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             # saved slider value, or the slider echoing a stage edit): leave
             # the split the user chose alone.
             self.gain = self._source.slider_gain()
-            self._processor.set_gain_db(self._source.total_gain())
+            self._tell_processor_gain(self._source.total_gain())
             return
         self._source.set_gain(self.gain)
         if staged:
@@ -11273,7 +11276,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             self._sync_gain_stage_spins()
             self.gain = self._source.slider_gain()
             self._gain_win.set_value(self.gain)
-            self._processor.set_gain_db(self._source.total_gain())
+            self._tell_processor_gain(self._source.total_gain())
             self._save_setting('rx', 'gain_db', float(self.gain))
             self._save_gain_stages()
             return
@@ -11324,7 +11327,18 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._rx_group_layout.addWidget(self._gain_stage_widget)
         self.gain = src.slider_gain()
         self._gain_win.set_value(self.gain)
-        self._processor.set_gain_db(src.total_gain())
+        # Built during __init__ BEFORE the spectrum processor exists (the row
+        # sits under the RX Gain slider). 1.8.1 called the processor here and
+        # every HackRF died at startup (Ray Uberecken, 2026-11-19); __init__
+        # now hands the processor the total once it is created.
+        self._tell_processor_gain(src.total_gain())
+
+    def _tell_processor_gain(self, db):
+        """Keep the dBm scale gain-independent; a no-op until the spectrum
+        processor exists."""
+        proc = getattr(self, '_processor', None)
+        if proc is not None:
+            proc.set_gain_db(float(db))
 
     def _sync_gain_stage_spins(self):
         for name, spin in self._gain_stage_spins.items():
@@ -11348,7 +11362,7 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             spin.blockSignals(True); spin.setValue(applied); spin.blockSignals(False)
         self.gain = self._source.slider_gain()
         self._gain_win.set_value(self.gain)          # no callback (set_value is silent)
-        self._processor.set_gain_db(self._source.total_gain())
+        self._tell_processor_gain(self._source.total_gain())
         self._save_setting('rx', 'gain_db', float(self.gain))
         self._save_gain_stages()
 
