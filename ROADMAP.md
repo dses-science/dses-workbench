@@ -6,6 +6,18 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## v1.8.2 — SHIPPED 2026-11-20 (cut + published from Windows, release commit 9c0b8c6, tag v1.8.2; Rick: "Yes, fix and cut 1.8.2")
+
+Bug-fix release: **1.8.1 could not start with a HackRF attached** (Ray
+Uberecken, 2026-11-19 evening, the launcher's startup-failure box). The new
+gain-stage row was built during window construction before the spectrum
+processor existed and called it. Fixed in 01e35c0; the new
+`test_startup_staged_radio.py` builds the whole window with a stand-in
+HackRF, fails on v1.8.1 and passes here — run it before every cut.
+- [ ] Release_Workflow.md 4.5: add test_startup_staged_radio.py to the
+      pre-publish checks (the file carries another session's uncommitted
+      edits; add it when that lands).
+
 ## v1.8.1 — SHIPPED 2026-11-19 (cut + published from Windows, release commit 3eedd2d, tag v1.8.1; Rick: "Commit and cut 1.8.1")
 
 Bug-fix release (third digit), one change: **per-stage gain for the HackRF**
