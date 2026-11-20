@@ -6,6 +6,16 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## v1.8.1 — SHIPPED 2026-11-19 (cut + published from Windows, release commit 3eedd2d, tag v1.8.1; Rick: "Commit and cut 1.8.1")
+
+Bug-fix release (third digit), one change: **per-stage gain for the HackRF**
+(d358fbe). Ray Uberecken ran the Workbench at 47 dB, the top of its HackRF
+slider, against SDR Console's LNA 40 + VGA 26 = 66 dB; the bench showed the
+same hump drawn 2.6 dB tall at gain 40 and 0.4 dB at 30. The slider is now
+LNA + VGA (0-102 dB, LNA first) with a Stages row (LNA, VGA, AMP) in the
+Radio panel. Details in the v1.8.0 section's per-stage item below. Not
+tested on a HackRF (none in the lab); Ray is the first real test.
+
 ## v1.8.0 — SHIPPED 2026-11-19 (cut + published from Windows, release commits d1843c9 + c0f78b2, tag v1.8.0 on c0f78b2; Rick: "Yes, build it", then "release as is for Ray's review")
 
 Feature release (second digit) when cut. Both items come from Ray Uberecken
@@ -76,7 +86,7 @@ beside SDR Console 3.3, and his ask for a schedule that follows the sky.
       view against 67.6 s at alpha 0.003; and the same hump shrinks from
       2.6 dB to 0.4 dB to nothing as RX gain drops from 40 to 30 to 20 dB.
 - [x] **Per-stage gain for SoapySDR radios — the HackRF was capped at 47 dB**
-      (ON MAIN 2026-11-19, not cut: a 1.8.1 candidate). Ray: "I run the only
+      (SHIPPED in 1.8.1, 2026-11-19). Ray: "I run the only
       gain I can find at 47dB." The table gave a HackRF (0, 47) and one
       overall number went to the driver; SDR Console ran the same radio at
       LNA 40 + VGA 26 = 66 dB with the amp off, which the overall number
