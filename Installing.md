@@ -159,7 +159,7 @@ The zip is roughly 60 MB — it includes a short sample recording so the program
 
 ### 3.1 Windows 11
 
-1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.8.2 fixed that.) The extracted folder is named for the version, `dses-workbench-1.8.2\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.6.1 fixed that.) The extracted folder is named for the version, `dses-workbench-1.8.2\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
@@ -304,7 +304,7 @@ When you launch the Workbench with an RSP attached, it appears in the device pic
 
 Regardless of OS, before declaring the install good:
 
-- The window title bar reads `DSES Radio Astronomy Workbench — v1.1.6 — <radio model> — <serial>` (e.g. `… — USRP B210 — 3273A91` or `… — RSP1B — 240513BE60`). The version number must match the bundle you installed; the radio portion confirms which device is being used.
+- The window title bar reads `DSES Radio Astronomy Workbench — v1.8.2 — <radio model> — <serial>` (e.g. `… — USRP B210 — 3273A91` or `… — RSP1B — 240513BE60`). The version number must match the bundle you installed; the radio portion confirms which device is being used.
 - Pull up **Help → User Guide** from the menu bar. The guide should open.
 - Pull up **Help → About**. The author, version, license, and the path to the settings file should be readable.
 - The spectrum plot should show live data (not a flat line at −140 dB). If it's flat, the radio isn't streaming — see Troubleshooting §6.
@@ -350,7 +350,7 @@ You can also trigger a check at any time via **Help → Check for Updates…**. 
 Click **Install Update…** in the update dialog. The app downloads the new bundle, **verifies its published checksum** before changing anything, and asks how to install it:
 
 - **Update this installation** (default) — replaces the current version in place. The files it overwrites are backed up first, so a failed update rolls back instead of leaving a broken install. When it finishes, it offers to **restart** into the new version.
-- **Install a new copy** — installs into a folder you choose and **keeps** the current version. Leave **Add a desktop shortcut** ticked and it creates a *separate* icon labelled with the new version (e.g. *DSES Radio Astronomy Workbench 1.1.6*), so both versions stay launchable.
+- **Install a new copy** — installs into a folder you choose and **keeps** the current version. Leave **Add a desktop shortcut** ticked and it creates a *separate* icon labelled with the new version (e.g. *DSES Radio Astronomy Workbench 1.8.2*), so both versions stay launchable.
 
 Radioconda does **not** need reinstalling for an app update.
 
