@@ -26,7 +26,7 @@ Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
       the program now asks for none of them on a Mac. Resize cursors are
       native from macOS 15. Linux (X11 cursor themes) and Windows (system
       cursors) never take this path.
-- [ ] Confirm on the Mac.
+- [x] Confirmed on the Mac (Rick, 2026-11-22).
 
 ## v1.9.1 — SHIPPED 2026-11-22 (bug fix): 1.9.0 crashes on the Mac
 
