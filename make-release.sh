@@ -49,6 +49,8 @@ for f in \
     dses_workbench.py \
     dses_spectrum_analyzer.py \
     dses_radio.py \
+    dses_window.py \
+    dses_icons.py \
     sigproc_fil.py \
     pulsar_planner.py \
     pulsar_sim.py \

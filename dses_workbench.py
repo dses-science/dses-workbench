@@ -130,6 +130,7 @@ import ezra_txt
 from dses_radio import (_addr_to_dict, DRIVER_UHD_B200, find_b200_uhd,  # noqa: F401
                         RadioSource, UhdB200Source, RealtimeMode,
                         ensure_uhd_images)
+import dses_window          # menus, toolbars, status fields (1.9 redesign)
 ensure_uhd_images()   # dev envs have UHD but no firmware images
 
 # In-app upgrade helper (download/verify/extract/install). OS-neutral core; the
@@ -372,6 +373,7 @@ DEFAULTS = {
     },
     'ui': {
         'control_panels_visible': True,
+        'toolbar_names':          True,   # names under the big toolbar icons
     },
     'sweep': {
         # Swept (stepped) spectrum-analyzer mode: tune the radio across a
@@ -3317,40 +3319,59 @@ two files to <code>sample.sigmf-data</code> and <code>sample.sigmf-meta</code>,
 and drop them next to the program. (You don't need to change any code.)</li>
 </ul>
 
-<h3>Control panels (dockable)</h3>
-<p>Every control panel is dockable. On the <b>right</b>:
-<b>Observation</b>, <b>Tuning</b>, <b>Radio</b>, and <b>Recording</b> — the
-science settings. On the <b>left</b>, beside the plots they belong to:
-<b>Spectrum Display</b> and <b>Waterfall Display</b>. Drag a panel by its
-title bar to rearrange, stack panels as tabs, tear one off into its own
-floating window (handy on a second monitor), or close it; the <b>View</b>
-menu is organised by column — <b>Display Panels (left)</b> and <b>Control
-Panels (right)</b> — and each of those opens onto a <i>Show this column</i>
-switch that hides or restores the whole column in one click, followed by
-that column's individual panels. Hiding a column remembers which of its
-panels were open, so showing it again brings back exactly those (a panel you
-had closed on purpose stays closed). Your arrangement is remembered across
-runs. To float a panel, <b>drag it out by its title bar</b>. The title
-bar's three buttons act on it afterwards: the first <b>docks a floating
-panel back</b> into the window — which restores the default panel layout,
-the one arrangement Qt reliably rebuilds, so a panel can always be
-recovered. The second <b>enlarges</b> a floating panel just enough that all
-of its controls are visible; while enlarged the button shows a double-box
-<i>restore</i> icon and a click returns the panel to its previous size
-(resizing the panel by hand clears that state, so the next click enlarges
-afresh). It is greyed out while the panel is docked, where the layout sets
-the size. <b>✕</b> hides the panel. When
-a column runs out of room Qt stacks panels as tabs along its edge — those
-tabs are colored (pastel blue, DSES teal when selected) so the stack is easy
-to spot. The two display panels are deliberately restricted to the left column
-(they describe the plots, so they stay next to them) — they can still be
-reordered there, tabbed together, or floated freely. Control panels dock in
-either column but never along the top or bottom of the window, so a panel on
-its way to a floating spot is not snapped into a strip across the top. The
-menu bar (File / View / Radio / Recording / Help) duplicates the important
-actions, and long status messages — recording filenames, analysis progress —
-appear in the full-width <b>status bar</b> at the bottom of the window where
-they are never truncated.</p>
+<h3>The window: menus, toolbars, panels, status bar</h3>
+<p>The plots fill the middle of the window. Around them:</p>
+<ul>
+<li><b>Menu bar</b> (File / View / Radio / Observe / Recording / Help) — every
+command in the program is in a menu, including everything on the toolbars.
+On a Mac the menus are in the system menu bar at the top of the screen.</li>
+<li><b>Toolbars, top row</b> (big icons with their names):
+<b>Recording</b> — Record, Stop, Format (I/Q, .fil, ezRA), Schedule (opens the
+Record for / Start at / Repeat settings), Quick look; <b>Observation</b> — the
+observation Preset, Live, Sweep; <b>Tools</b> — Pulsars in View, B210 Self
+Test, Drift-Scan Review; <b>Window</b> — Settings Panels (show or hide them),
+Full Screen, User Guide.</li>
+<li><b>Toolbars, second row</b> (compact): <b>Tuning</b> — the Band presets,
+the centre frequency in MHz (type a number and press Enter; Ctrl+F jumps
+there; it sets the Tuning panel to Manual at that frequency), RX gain and
+sample rate; <b>Display</b> — Line View, Trace (Average / Peak / both),
+Autoscale, Waterfall Levels, Reset Axes, Max Hold, Min Hold, Reset Holds,
+Clear Markers. Hover over any button for what it does.</li>
+<li>Every toolbar button drives the <i>same</i> control as the panels, so the
+two always agree. Toolbars can be dragged to another position or hidden
+(View &gt; Toolbars); <i>Show Button Names</i> there turns the names under the
+big icons on or off. A toolbar too long for the window hides its last buttons
+behind a <b>»</b>; they are all in the menus too.</li>
+<li><b>Settings panels</b> — <b>Observation</b>, <b>Tuning</b>,
+<b>Radio</b>, <b>Recording</b>, <b>Spectrum Display</b> and <b>Waterfall
+Display</b> — are stacked as tabs in one column on the right; click a tab
+(the names run down the window's edge) to bring that panel up. <b>F9</b> or
+the Settings Panels button hides them all for a full-width plot and brings
+back exactly the ones that were open. Drag a panel by its title bar to dock
+it somewhere else, put two side by side, or tear it off into its own window
+(handy on a second monitor). <b>View &gt; Panels</b> lists every panel, and
+offers two ready arrangements: <i>One Column</i> (the default) and <i>Two
+Columns</i> (display panels on the left, science panels on the right, as in
+versions 1.2 to 1.8). <b>View &gt; Reset Window Layout</b> puts toolbars and
+panels back where they start. Your arrangement is remembered across runs.</li>
+<li>The panel title bar's three buttons: the first <b>docks a floating panel
+back</b> (it restores the default layout, the one arrangement Qt reliably
+rebuilds, so a panel can always be recovered); the second <b>enlarges</b> a
+floating panel just enough that all of its controls show, and toggles back;
+<b>✕</b> hides the panel (View &gt; Panels brings it back).</li>
+<li><b>Status bar</b>: messages (recording file names, analysis progress) on
+the left, never truncated; fixed fields on the right — the recording state
+(red with elapsed and time left while recording, amber with the countdown
+while armed), <b>Check settings</b> in amber when the Observation panel's
+settings check finds a risky combination (hover for what it found), the
+centre frequency, sample rate, gain, the radio, <b>O:</b> the number of
+dropped-sample events since the program started (red once any), UTC, and
+the local sidereal time at the site.</li>
+<li>Keys: Ctrl+R Record, Ctrl+F frequency box, Ctrl+L Line View,
+Ctrl+Shift+A Autoscale, Ctrl+0 Reset Axes, Ctrl+P Pulsars in View, F9
+settings panels, F11 full screen, F1 this guide (Cmd instead of Ctrl on a
+Mac).</li>
+</ul>
 <h4>Observe menu — Pulsars in View (Ctrl+P)</h4>
 <p>Answers "what can I record right now?" from the ATNF catalog: every
 pulsar above the site's elevation mask, sorted by flux <i>in the band you
@@ -3788,8 +3809,8 @@ RFI hunting; Sweep always uses it, and so do the Max/Min hold traces.
 <i>Average + peak</i> draws the thin line over a faint peak band. Zoom in
 until there are two bins or fewer per pixel and every bin is drawn as it
 is, whatever this is set to.</li>
-<li><b>Line view</b> (the button at the top of the panel, View menu,
-Ctrl+L): one click to <i>watch</i> a spectral line change in shape and
+<li><b>Line view</b> (the button at the top of the panel, the Display
+toolbar, View menu, Ctrl+L): one click to <i>watch</i> a spectral line change in shape and
 height. It picks the FFT size that gives about 1 kHz resolution at the
 current sample rate, sets Avg α to 0.05 (about a two-second response),
 Smooth to 9 bins, Trace to Average, turns the holds off, zooms to ±0.9 MHz
@@ -7122,10 +7143,10 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
 
         # QMainWindow shell: plots are the central widget (the thing you
         # watch while observing); every control group lives in a dockable
-        # panel on the right. Menu + status bar are the real QMainWindow
-        # ones — the status bar is full-width, so long recording/analysis
-        # messages are no longer squeezed into a 300 px column.
-        self.setMenuBar(self._build_menu_bar())
+        # panel. The menu bar, toolbars and status-bar fields are built by
+        # dses_window.WindowChrome at the end of __init__, once every
+        # control they drive exists (1.9 redesign). The status bar is
+        # full-width, so long recording/analysis messages are never squeezed.
         self._status_bar = QtWidgets.QStatusBar(self)
         self.setStatusBar(self._status_bar)
 
@@ -7155,9 +7176,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             dock = QtWidgets.QDockWidget(title, self)
             dock.setObjectName(objname)          # required for saveState()
             # Restrict where the dock may DROP; floating is always allowed.
-            # The layout has two columns and nothing else: display panels are
-            # left-column-only, and every other panel may dock left or right
-            # but never top or bottom — with those allowed, a panel being
+            # Panels dock left or right (since 1.9 the display panels too:
+            # the default stacks all six in the right column) but never top
+            # or bottom — with those allowed, a panel being
             # dragged to a floating spot snapped into a full-width strip
             # across the top of the window before it got there (Rick,
             # 2026-09-27).
@@ -7183,17 +7204,8 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             dock._dses_home_area = area          # column membership, fixed
             self.addDockWidget(area, dock)
             self._docks.append(dock)
-            # File the panel's show/hide toggle under its column's submenu.
-            entry = self._col_menus.get(area)
-            if entry is not None:
-                entry[1].addAction(dock.toggleViewAction())
-            else:                                  # unknown area: top level
-                self._view_menu.insertAction(self._view_menu_sep,
-                                             dock.toggleViewAction())
-            # Keep the column check mark honest when panels are toggled
-            # individually: a column with nothing visible is unchecked.
-            dock.visibilityChanged.connect(
-                lambda _v, a=area: self._refresh_dock_column_checks(a))
+            # View > Panels and the F9 toggle are built from self._docks by
+            # dses_window.WindowChrome once every panel exists.
             # Insert groups above the trailing stretch.
             def _add(w, _lay=lay, _title=title):
                 # The dock's shaded title bar already names the panel, so an
@@ -8006,7 +8018,6 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         # Per-plot setting persistence. Each widget emits control_changed
         # (settings_key, value); we route to the appropriate INI section.
         self._fft_plot.control_changed.connect(self._on_spectrum_control_changed)
-        self._fft_plot.line_view_changed.connect(self._line_view_act.setChecked)
         self._waterfall_plot.control_changed.connect(
             lambda k, v: self._save_setting('waterfall', k, v))
 
@@ -8016,18 +8027,17 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self.plots_splitter.setStretchFactor(1, 1)
         self.plots_splitter.setSizes([400, 400])
 
-        # Display-control panels become docks too (Rick, 2026-08-04), but
-        # LEFT-column-only: they describe the plots, so they live beside
-        # them — draggable/floatable/hidable like the rest, just not
-        # droppable into the right column of science controls.
+        # Display-control panels become docks too (Rick, 2026-08-04). Their
+        # HOME is the left column (the 1.2-1.8 arrangement, View > Panels >
+        # Two Columns); since 1.9 the default stacks every panel as tabs in
+        # one right-hand column (dses_window.WindowChrome.arrange_default),
+        # so they may dock on either side.
         _add_sd = self._make_dock("Spectrum Display", "dock_spectrum_display",
                                   area=Qt.LeftDockWidgetArea,
-                                  allowed=Qt.LeftDockWidgetArea,
                                   min_width=248)
         _add_sd(self._fft_plot.take_panel())
         _add_wd = self._make_dock("Waterfall Display", "dock_waterfall_display",
                                   area=Qt.LeftDockWidgetArea,
-                                  allowed=Qt.LeftDockWidgetArea,
                                   min_width=248)
         _add_wd(self._waterfall_plot.take_panel())
 
@@ -8135,6 +8145,12 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         # a newer version). Configured URL = no traffic until the developer
         # publishes one.
         self._setup_update_checker()
+
+        # Menus, toolbars and status-bar fields (1.9). Built LAST, once every
+        # control they mirror exists and holds its saved value: the actions
+        # read the panels' current state when they are made (the 1.8.1
+        # startup-order lesson: nothing here may run before the processor).
+        self._chrome = dses_window.WindowChrome(self)
 
     def _display_upstream(self):
         """The block that feeds the display chain: the rotator in playback
@@ -8561,164 +8577,6 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         self._fft_plot.on_frame(self._sweep_wide_db, max_for_plot, None,
                                     detector='peak')
         self._waterfall_plot.on_frame(self._sweep_wide_db, None, None)
-
-    def _build_menu_bar(self):
-        bar = QtWidgets.QMenuBar(self)
-
-        file_menu = bar.addMenu("&File")
-        choose_dir_act = QtGui.QAction("&Set Recording Folder…", self)
-        choose_dir_act.setToolTip(
-            "Choose where recordings are written (same as the Folder button "
-            "in the Recording panel)")
-        choose_dir_act.triggered.connect(self._on_change_recording_dir)
-        file_menu.addAction(choose_dir_act)
-        open_dir_act = QtGui.QAction("&Open Recordings Folder", self)
-        open_dir_act.triggered.connect(lambda: QtGui.QDesktopServices.openUrl(
-            QtCore.QUrl.fromLocalFile(self.recording_dir)))
-        file_menu.addAction(open_dir_act)
-        file_menu.addSeparator()
-        exit_act = QtGui.QAction("E&xit", self)
-        exit_act.setShortcut(QtGui.QKeySequence.Quit)
-        exit_act.triggered.connect(self.close)
-        file_menu.addAction(exit_act)
-
-        # Dock show/hide toggles are appended here by _make_dock as each
-        # panel is created (the menu bar is built first in __init__).
-        self._view_menu = bar.addMenu("&View")
-        # Two column entries, each a checkable action that shows/hides the
-        # WHOLE column, with that column's panels as a submenu underneath
-        # (Rick, 2026-08-04). _make_dock files each panel into the submenu
-        # matching the area it was created in.
-        # Each column is a SUBMENU whose first item toggles the whole column,
-        # with that column's panels listed below it. (A checkable action that
-        # owns a submenu is not clickable in Qt — clicking only opens the
-        # submenu — so the column toggle has to live inside.)
-        self._col_menus = {}
-        for area, label in ((Qt.LeftDockWidgetArea, "&Display Panels (left)"),
-                            (Qt.RightDockWidgetArea, "&Control Panels (right)")):
-            sub = self._view_menu.addMenu(label)
-            act = QtGui.QAction("Show this column", self)
-            act.setCheckable(True)
-            act.setChecked(True)
-            act.triggered.connect(
-                lambda on, a=area: self._set_dock_column_visible(a, on))
-            sub.addAction(act)
-            sub.addSeparator()
-            self._col_menus[area] = (act, sub)
-        self._view_menu_sep = self._view_menu.addSeparator()
-        # Line view: one click to watch a spectral line (mirrors the button
-        # at the top of the Spectrum Display panel; the plot does the work).
-        self._line_view_act = QtGui.QAction("&Line View (watch the hydrogen line)", self)
-        self._line_view_act.setCheckable(True)
-        self._line_view_act.setShortcut(QtGui.QKeySequence("Ctrl+L"))
-        self._line_view_act.toggled.connect(
-            lambda on: self._fft_plot.set_line_view(on))
-        self._view_menu.addAction(self._line_view_act)
-        fs_act = QtGui.QAction("&Full Screen", self)
-        fs_act.setCheckable(True)
-        fs_act.setShortcut(QtGui.QKeySequence.FullScreen)
-        fs_act.toggled.connect(
-            lambda on: self.showFullScreen() if on else self.showNormal())
-        self._view_menu.addAction(fs_act)
-
-        radio_menu = bar.addMenu("&Radio")
-        dev_act = QtGui.QAction("Change &Device…", self)
-        dev_act.triggered.connect(self._on_change_device_clicked)
-        radio_menu.addAction(dev_act)
-
-        obs_menu = bar.addMenu("&Observe")
-        insight_act = QtGui.QAction("&Pulsars in View…", self)
-        insight_act.setShortcut("Ctrl+P")
-        insight_act.setToolTip(
-            "Which pulsars are above the horizon here, right now — with "
-            "P0, DM, flux in the tuned band, and time left before each sets")
-        insight_act.triggered.connect(self._show_pulsar_planner)
-        obs_menu.addAction(insight_act)
-        refresh_cat_act = QtGui.QAction("&Refresh Pulsar Catalog", self)
-        refresh_cat_act.setToolTip(
-            "Re-download the ATNF catalog (cached locally; works offline "
-            "afterwards)")
-        refresh_cat_act.triggered.connect(
-            lambda: self._show_pulsar_planner(force_refresh=True))
-        obs_menu.addAction(refresh_cat_act)
-        obs_menu.addSeparator()
-        selftest_act = QtGui.QAction("B210 &Self Test…", self)
-        selftest_act.setToolTip(
-            "Transmit a synthetic dispersed pulsar from the B210's own TX "
-            "(gain measured in, 0–40 dB), record the internal leakage, fold "
-            "it with PRESTO, and grade PASS/FAIL — proves the whole chain "
-            "with no cable before telescope time is spent")
-        selftest_act.triggered.connect(self._show_selftest_dialog)
-        obs_menu.addAction(selftest_act)
-        obs_menu.addSeparator()
-        dsr_act = QtGui.QAction("&Drift-Scan Review…", self)
-        dsr_act.setToolTip(
-            "Open recorded ezRA drift-scan files (Workbench or ezCol) and "
-            "get the standard morning-after report: header sanity, gap and "
-            "spur census, flattened waterfall, velocity profile, and a "
-            "transit fit — plus a peak-vs-day trend across several files")
-        dsr_act.triggered.connect(self._show_driftscan_review)
-        obs_menu.addAction(dsr_act)
-
-        rec_menu = bar.addMenu("Recor&ding")
-        rec_start_act = QtGui.QAction("&Start Recording", self)
-        rec_start_act.triggered.connect(lambda: self.set_record(1))
-        rec_menu.addAction(rec_start_act)
-        rec_stop_act = QtGui.QAction("S&top Recording", self)
-        rec_stop_act.triggered.connect(lambda: self.set_record(0))
-        rec_menu.addAction(rec_stop_act)
-
-        help_menu = bar.addMenu("&Help")
-        guide_act = QtGui.QAction("&User Guide", self)
-        guide_act.setShortcut(QtGui.QKeySequence.HelpContents)
-        guide_act.triggered.connect(self._show_help_dialog)
-        help_menu.addAction(guide_act)
-        update_act = QtGui.QAction("Check for &Updates…", self)
-        update_act.triggered.connect(self._check_for_updates_manual)
-        help_menu.addAction(update_act)
-        about_act = QtGui.QAction("&About…", self)
-        about_act.triggered.connect(self._show_about_dialog)
-        help_menu.addAction(about_act)
-        return bar
-
-    def _docks_in_area(self, area):
-        """Panels belonging to `area` — by creation area, not current
-        position, so a floated panel still counts as part of its column."""
-        return [d for d in getattr(self, '_docks', [])
-                if getattr(d, '_dses_home_area', None) == area]
-
-    def _set_dock_column_visible(self, area, on):
-        """Show/hide a whole column of panels at once (View menu).
-
-        Hiding remembers which panels were visible so showing the column
-        again restores exactly that set rather than blindly showing all —
-        a panel the user had closed individually stays closed.
-        """
-        docks = self._docks_in_area(area)
-        if not docks:
-            return
-        if not hasattr(self, '_col_hidden_state'):
-            self._col_hidden_state = {}
-        if on:
-            remembered = self._col_hidden_state.get(area)
-            for d in docks:
-                d.setVisible(remembered is None or d.objectName() in remembered)
-        else:
-            self._col_hidden_state[area] = {
-                d.objectName() for d in docks if d.isVisible()}
-            for d in docks:
-                d.setVisible(False)
-        self._refresh_dock_column_checks(area)
-
-    def _refresh_dock_column_checks(self, area):
-        entry = getattr(self, '_col_menus', {}).get(area)
-        if entry is None:
-            return
-        act, _sub = entry
-        any_visible = any(d.isVisible() for d in self._docks_in_area(area))
-        if act.isChecked() != any_visible:
-            with _SignalBlocker(act):
-                act.setChecked(any_visible)
 
     # --- Pulsar visibility planner ---------------------------------------
 
@@ -9152,15 +9010,30 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             # sequence (setFloating/addDockWidget/removeDockWidget, in all
             # orders) leaves Qt reporting the panel docked while it still
             # renders as a window over the plots (instrumented 2026-08-04).
+            # Two pristine arrangements (1.9): the 1.2-1.8 two columns, kept
+            # for View > Panels > Two Columns, then the default one tabbed
+            # column, which the title bars' dock-back button and View >
+            # Reset Window Layout restore.
+            chrome = getattr(self, '_chrome', None)
+            if chrome is not None:
+                chrome.arrange_classic()
+                self._classic_dock_state = self.saveState()
+                chrome.arrange_default()
             self._default_dock_state = self.saveState()
-            # Restore the saved dock arrangement (positions, tabbing,
-            # floating, visibility). Skipped silently on first run or if
-            # the saved state predates a dock-name change.
+            # Restore the saved arrangement (positions, tabbing, floating,
+            # visibility, toolbars). 1.9 keeps it under its OWN key with its
+            # own version number: restoring the 1.8 'dock_state' would put
+            # the panels back in two columns under the new toolbars, and a
+            # 1.8 install reading a 1.9 state would move its display panels
+            # into the right column (both tested 2026-11-20). So 1.9 never
+            # reads or writes 'dock_state', and going back to 1.8 finds its
+            # own layout untouched. Skipped silently on first run.
             try:
                 cp = self._app_settings._cp
-                if cp.has_option('window', 'dock_state'):
+                if cp.has_option('window', dses_window.LAYOUT_KEY):
                     self.restoreState(QtCore.QByteArray.fromBase64(
-                        cp.get('window', 'dock_state').encode('ascii')))
+                        cp.get('window', dses_window.LAYOUT_KEY).encode('ascii')),
+                        dses_window.LAYOUT_VERSION)
             except Exception:
                 pass
             # X11 reparenting WMs (LXDE/Openbox) may not have drawn the title-bar
@@ -9263,8 +9136,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             # loses the dock layout (gap found in the 1.2.0 Mac test pass —
             # it was previously saved only in closeEvent).
             try:
-                state = bytes(self.saveState().toBase64()).decode('ascii')
-                self._app_settings.set('window', 'dock_state', state)
+                state = bytes(self.saveState(dses_window.LAYOUT_VERSION)
+                              .toBase64()).decode('ascii')
+                self._app_settings.set('window', dses_window.LAYOUT_KEY, state)
             except Exception:
                 pass
             self._app_settings.save()
@@ -9813,6 +9687,10 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
             lbl.setText("integrated spectra, one row per ~10–15 s  ·  "
                         f"~1 MB/hr  ·  {dc_txt}{hi_txt}")
         lbl.setStyleSheet("color: #b45309;" if warn else "color: gray;")
+        # Echoed as an amber status-bar field (dses_window): this label's
+        # panel may be on a hidden tab, and a warning must sit where the
+        # user is looking (the 1.5.1 lesson).
+        self._consequences_warning = warn
         lbl.setToolTip(lbl.toolTip().split('\n\nWarning:')[0]
                        + (f"\n\nWarning: {warn}." if warn else ""))
 
