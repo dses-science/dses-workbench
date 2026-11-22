@@ -6,6 +6,46 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## v1.9.0 — SHIPPED 2026-11-22 (cut + published from Windows, release commit 9c25a30, tag v1.9.0; Rick: "release this software") — the traditional window
+
+Feature release (second digit). Rick asked on 2026-11-19 for "a more
+traditional look and feel with menu, groups of shortcut icons", with SDR
+Console V3.3 as the bar; the design proposal (design/gui-redesign-2026-11/
+PROPOSAL.md, mockups + prototype) was approved 2026-11-20: layout A and one
+tabbed settings column. Built the same afternoon in a separate worktree
+(d0212f2), released 2026-11-22 (Rick: "release this software").
+
+- [x] **Menu bar + toolbars from one action registry** (dses_window.py):
+      File / View / Radio / Observe / Recording / Help hold every command;
+      toolbars Recording, Observation, Tools, Window (names under the icons)
+      and a compact Tuning (band, frequency box, gain, rate) + Display (Line
+      View, Trace, autoscale, holds, markers) row. Every action drives the
+      existing panel control and follows it back. Shortcuts Ctrl+R, Ctrl+F,
+      Ctrl+Shift+A, Ctrl+0, F9 added.
+- [x] **Drawn icons** (dses_icons.py, 37): no fonts, files or SVG plugin, the
+      1.2.0 macOS lesson.
+- [x] **Status-bar fields**: recording state, settings warning (the
+      Observation panel's amber check, now visible wherever you look),
+      frequency, rate, gain, radio, overflows, UTC, LST; they drop out one by
+      one on a narrow window.
+- [x] **One tabbed settings column** (default) + View > Panels > Two Columns
+      (the 1.8 layout) + Reset Window Layout. Layout saved under
+      `[window] layout_v2` (version 2); the 1.8 `dock_state` is never read or
+      written, so a downgrade finds its own layout (tested both directions).
+- [ ] Hands-on on Windows, the Mac's native menu bar, the Pi over xrdp (0x0
+      screen: toolbar drop-downs and the "»" overflow), and a live radio
+      (toolbar gain box beside the HackRF Stages row). NOT done before the
+      release.
+- [ ] Stage 2: a Preferences dialog for the settings that have no control
+      ([site] lat/lon/height/name/SEFD, ezRA geometry, sweep settle, update
+      checks); slim the Observation panel (preset and mode are on the
+      toolbar now).
+- [ ] Stage 3 (optional): ribbon on the same action registry; toolbar
+      customising.
+- [ ] Release_Workflow.md 4.5: add test_main_window_actions.py beside
+      test_startup_staged_radio.py (another session's uncommitted edits sit
+      in that file).
+
 ## v1.8.2 — SHIPPED 2026-11-20 (cut + published from Windows, release commit 9c0b8c6, tag v1.8.2; Rick: "Yes, fix and cut 1.8.2")
 
 Bug-fix release: **1.8.1 could not start with a HackRF attached** (Ray
