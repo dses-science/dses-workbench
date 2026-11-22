@@ -25,6 +25,7 @@ dev clone, layout "A" + one tabbed settings column):
 
 PySide6 only. Icons come from dses_icons (drawn, no fonts or files).
 """
+import sys
 import time
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -494,6 +495,16 @@ class WindowChrome(QtCore.QObject):
         tb.setObjectName(objname)                 # required by saveState()
         tb.setAllowedAreas(Qt.TopToolBarArea | Qt.BottomToolBarArea)
         tb.setFloatable(False)
+        if sys.platform == "darwin":
+            # macOS: no drag grip. A movable toolbar sets Qt::SizeAllCursor
+            # when the mouse crosses its grip, and macOS has no system cursor
+            # for that shape, so Qt builds one from a bitmap
+            # (QCocoaCursor::createCursorData -> QImage::toCGImage); on the
+            # Mac (macOS 27.2.1, Qt 6.11.1) that crashed the program with a
+            # SIGSEGV inside CGImageCreate (1.9.0 crash report, 2026-11-22).
+            # Without the grip Qt never asks for that cursor. Arrangement
+            # stays available: View > Toolbars, Panels and Reset Window Layout.
+            tb.setMovable(False)
         tb._dses_big = big
         self.toolbars_menu.addAction(tb.toggleViewAction())
         self.toolbars.append(tb)

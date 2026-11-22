@@ -112,6 +112,21 @@ check(not notip, f"all toolbar actions have a tooltip (missing: {notip})")
 names = {tb.objectName() for tb in ch.toolbars}
 check(names == {"tb_recording", "tb_observation", "tb_tools", "tb_window",
                 "tb_tuning", "tb_display"}, f"six named toolbars: {sorted(names)}")
+if sys.platform != "darwin":
+    check(all(tb.isMovable() for tb in ch.toolbars), "toolbars have a drag grip (not macOS)")
+# macOS: a movable toolbar's grip asks Qt for the bitmap SizeAll cursor, which
+# crashed 1.9.0 on the Mac (QCocoaCursor -> CGImageCreate SIGSEGV). Build one
+# toolbar the way macOS does and check it has no grip.
+_plat = sys.platform
+try:
+    sys.platform = "darwin"
+    mac_tb = ch._tb("Mac test", "tb_mac_test", False)
+finally:
+    sys.platform = _plat
+check(not mac_tb.isMovable(), "a toolbar built on macOS has no drag grip")
+ch.toolbars.remove(mac_tb)
+ch.toolbars_menu.removeAction(mac_tb.toggleViewAction())
+mac_tb.deleteLater()
 tops = [a.text().replace("&", "") for a in w.menuBar().actions()]
 check(tops == ["File", "View", "Radio", "Observe", "Recording", "Help"], f"menus {tops}")
 

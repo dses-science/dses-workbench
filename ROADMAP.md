@@ -6,6 +6,17 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
+## v1.9.1 — candidate (bug fix): 1.9.0 crashes on the Mac
+
+- [x] **Toolbars have no drag grip on macOS.** 1.9.0 crashed on Rick's Mac
+      (macOS 27.2.1, Qt 6.11.1) about 35 s after opening: a movable toolbar's
+      grip asks for Qt::SizeAllCursor, which Qt builds from a bitmap on macOS,
+      and that faulted in CGImageCreate. Fixed in dses_window._tb; checked by
+      test_main_window_actions. Windows and Linux keep the grip.
+- [ ] Confirm on the Mac (open the window, sweep the mouse over every
+      toolbar, open Observe > Pulsars in View — the planner uses the other
+      bitmap cursor, the busy cursor).
+
 ## v1.9.0 — SHIPPED 2026-11-22 (cut + published from Windows, release commit 9c25a30, tag v1.9.0; Rick: "release this software") — the traditional window
 
 Feature release (second digit). Rick asked on 2026-11-19 for "a more

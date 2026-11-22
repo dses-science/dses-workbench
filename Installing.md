@@ -1,6 +1,6 @@
 # DSES Radio Astronomy Workbench — Installation Guide
 
-**Version 1.9.0**
+**Version 1.9.1**
 Author: Richard M Hambly (K0GD) — k0gd@cnssys.com
 License: GPL-3.0-or-later
 
@@ -150,16 +150,16 @@ Accept the prompt; conda downloads and installs the three packages. If the launc
 
 Download the application from the distribution site. You can either use the direct links below, or browse the folder <https://gpstime.com/sw_distribution/dses-workbench/> and pick the newest `dses-workbench-*.zip`:
 
-- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.9.0.zip>
+- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.9.1.zip>
 - **This guide (PDF):** <https://gpstime.com/sw_distribution/dses-workbench/DSES_Radio_Astronomy_Workbench_Installation.pdf>
 
 The zip is roughly 60 MB — it includes a short sample recording so the program can run in playback mode when no radio is attached. (Replace the version number in the link if a later release has been published.)
 
-**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.9.0`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
+**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.9.1`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
 
 ### 3.1 Windows 11
 
-1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.6.1 fixed that.) The extracted folder is named for the version, `dses-workbench-1.9.0\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.6.1 fixed that.) The extracted folder is named for the version, `dses-workbench-1.9.1\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
@@ -178,8 +178,8 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
    ```bash
    mkdir -p ~/Applications && cd ~/Applications
-   unzip ~/Downloads/dses-workbench-1.9.0.zip
-   mv dses-workbench-1.9.0 dses-workbench
+   unzip ~/Downloads/dses-workbench-1.9.1.zip
+   mv dses-workbench-1.9.1 dses-workbench
    cd dses-workbench
    chmod +x launcher.sh
    ```
@@ -209,8 +209,8 @@ The steps are the same as Linux. Extract it into your personal **`~/Applications
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-unzip ~/Downloads/dses-workbench-1.9.0.zip
-mv dses-workbench-1.9.0 dses-workbench
+unzip ~/Downloads/dses-workbench-1.9.1.zip
+mv dses-workbench-1.9.1 dses-workbench
 cd dses-workbench
 chmod +x launcher.sh
 ./launcher.sh
@@ -304,7 +304,7 @@ When you launch the Workbench with an RSP attached, it appears in the device pic
 
 Regardless of OS, before declaring the install good:
 
-- The window title bar reads `DSES Radio Astronomy Workbench — v1.9.0 — <radio model> — <serial>` (e.g. `… — USRP B210 — 3273A91` or `… — RSP1B — 240513BE60`). The version number must match the bundle you installed; the radio portion confirms which device is being used.
+- The window title bar reads `DSES Radio Astronomy Workbench — v1.9.1 — <radio model> — <serial>` (e.g. `… — USRP B210 — 3273A91` or `… — RSP1B — 240513BE60`). The version number must match the bundle you installed; the radio portion confirms which device is being used.
 - Pull up **Help → User Guide** from the menu bar. The guide should open.
 - Pull up **Help → About**. The author, version, license, and the path to the settings file should be readable.
 - The spectrum plot should show live data (not a flat line at −140 dB). If it's flat, the radio isn't streaming — see Troubleshooting §6.
@@ -350,7 +350,7 @@ You can also trigger a check at any time via **Help → Check for Updates…**. 
 Click **Install Update…** in the update dialog. The app downloads the new bundle, **verifies its published checksum** before changing anything, and asks how to install it:
 
 - **Update this installation** (default) — replaces the current version in place. The files it overwrites are backed up first, so a failed update rolls back instead of leaving a broken install. When it finishes, it offers to **restart** into the new version.
-- **Install a new copy** — installs into a folder you choose and **keeps** the current version. Leave **Add a desktop shortcut** ticked and it creates a *separate* icon labelled with the new version (e.g. *DSES Radio Astronomy Workbench 1.9.0*), so both versions stay launchable.
+- **Install a new copy** — installs into a folder you choose and **keeps** the current version. Leave **Add a desktop shortcut** ticked and it creates a *separate* icon labelled with the new version (e.g. *DSES Radio Astronomy Workbench 1.9.1*), so both versions stay launchable.
 
 Radioconda does **not** need reinstalling for an app update.
 
@@ -578,7 +578,7 @@ The plots fill the middle of the window. Around them:
 
 - **Toolbars, second row** (compact): **Tuning** — the Band presets, the centre frequency in MHz (type a number and press Enter; Ctrl+F jumps there; it sets the Tuning panel to Manual at that frequency), RX gain and sample rate; **Display** — Line View, Trace (Average / Peak / both), Autoscale, Waterfall Levels, Reset Axes, Max Hold, Min Hold, Reset Holds, Clear Markers. Hover over any button for what it does.
 
-- Every toolbar button drives the *same* control as the panels, so the two always agree. Toolbars can be dragged to another position or hidden (View > Toolbars); *Show Button Names* there turns the names under the big icons on or off. A toolbar too long for the window hides its last buttons behind a **»**; they are all in the menus too.
+- Every toolbar button drives the *same* control as the panels, so the two always agree. Toolbars can be dragged to another position by their grip (Windows and Linux; on a Mac they stay where they are) or hidden (View > Toolbars); *Show Button Names* there turns the names under the big icons on or off. A toolbar too long for the window hides its last buttons behind a **»**; they are all in the menus too.
 
 - **Settings panels** — **Observation**, **Tuning**, **Radio**, **Recording**, **Spectrum Display** and **Waterfall Display** — are stacked as tabs in one column on the right; click a tab (the names run down the window's edge) to bring that panel up. **F9** or the Settings Panels button hides them all for a full-width plot and brings back exactly the ones that were open. Drag a panel by its title bar to dock it somewhere else, put two side by side, or tear it off into its own window (handy on a second monitor). **View > Panels** lists every panel, and offers two ready arrangements: *One Column* (the default) and *Two Columns* (display panels on the left, science panels on the right, as in versions 1.2 to 1.8). **View > Reset Window Layout** puts toolbars and panels back where they start. Your arrangement is remembered across runs.
 

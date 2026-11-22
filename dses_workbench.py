@@ -154,7 +154,7 @@ import time
 
 # === App metadata ===
 APP_NAME        = "DSES Radio Astronomy Workbench"
-APP_VERSION     = "1.9.0"
+APP_VERSION     = "1.9.1"
 APP_AUTHOR      = "Richard M Hambly (K0GD)"
 APP_AUTHOR_EMAIL = "k0gd@cnssys.com"
 APP_COPYRIGHT   = "Copyright © 2026 Richard M Hambly (K0GD)"
@@ -3338,7 +3338,8 @@ sample rate; <b>Display</b> — Line View, Trace (Average / Peak / both),
 Autoscale, Waterfall Levels, Reset Axes, Max Hold, Min Hold, Reset Holds,
 Clear Markers. Hover over any button for what it does.</li>
 <li>Every toolbar button drives the <i>same</i> control as the panels, so the
-two always agree. Toolbars can be dragged to another position or hidden
+two always agree. Toolbars can be dragged to another position by their grip
+(Windows and Linux; on a Mac they stay where they are) or hidden
 (View &gt; Toolbars); <i>Show Button Names</i> there turns the names under the
 big icons on or off. A toolbar too long for the window hides its last buttons
 behind a <b>»</b>; they are all in the menus too.</li>
