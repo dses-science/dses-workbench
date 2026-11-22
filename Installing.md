@@ -306,7 +306,7 @@ Regardless of OS, before declaring the install good:
 
 - The window title bar reads `DSES Radio Astronomy Workbench — v1.9.2 — <radio model> — <serial>` (e.g. `… — USRP B210 — 3273A91` or `… — RSP1B — 240513BE60`). The version number must match the bundle you installed; the radio portion confirms which device is being used.
 - Pull up **Help → User Guide** from the menu bar. The guide should open.
-- Pull up **Help → About**. The author, version, license, and the path to the settings file should be readable.
+- Pull up **Help → About** (on a Mac, **About** is in the menu named after the program). The author, version, license, and the path to the settings file should be readable.
 - The spectrum plot should show live data (not a flat line at −140 dB). If it's flat, the radio isn't streaming — see Troubleshooting §6.
 - Click the **408 MHz** preset under Pulsar Band. The center frequency should retune and the trace should redraw.
 
@@ -343,7 +343,7 @@ The program checks for new versions at launch — silently, no more than once pe
 - **Download .zip** — just downloads the bundle so you can apply it by hand.
 - **Skip this version** (won't nag again about that specific version) / **Remind me later**.
 
-You can also trigger a check at any time via **Help → Check for Updates…**. The automatic check never installs anything on its own — an update is only applied when you click **Install Update…**. To disable the auto-check entirely, set `auto_check = false` under `[updates]` in your `settings.ini`.
+You can also trigger a check at any time via **Help → Check for Updates…** (on a Mac, **Check for Updates…** is in the menu named after the program, with About and Quit, as on every Mac program). The automatic check never installs anything on its own — an update is only applied when you click **Install Update…**. To disable the auto-check entirely, set `auto_check = false` under `[updates]` in your `settings.ini`.
 
 ### Performing the update — in-app (easiest)
 
@@ -572,7 +572,7 @@ If no SDR is attached, the program looks next to the application file for `sampl
 
 The plots fill the middle of the window. Around them:
 
-- **Menu bar** (File / View / Radio / Observe / Recording / Help) — every command in the program is in a menu, including everything on the toolbars. On a Mac the menus are in the system menu bar at the top of the screen.
+- **Menu bar** (File / View / Radio / Observe / Recording / Help) — every command in the program is in a menu, including everything on the toolbars. On a Mac the menus are in the system menu bar at the top of the screen, and three commands move, as on every Mac program, to the menu named after the program: **About**, **Check for Updates…** and **Quit** (File > Exit elsewhere). Where this guide says Help > About or Help > Check for Updates, look there on a Mac.
 
 - **Toolbars, top row** (big icons with their names): **Recording** — Record, Stop, Format (I/Q, .fil, ezRA), Schedule (opens the Record for / Start at / Repeat settings), Quick look; **Observation** — the observation Preset, Live, Sweep; **Tools** — Pulsars in View, B210 Self Test, Drift-Scan Review; **Window** — Settings Panels (show or hide them), Full Screen, User Guide.
 
@@ -760,7 +760,7 @@ To revert everything to factory defaults, use **Restore Defaults** in the About 
 
 If the developer has configured a manifest URL, the program checks for a newer release in the background at launch (no more than once every 24 hours). When a newer version is found, a non-modal dialog opens with the release notes and a button that opens the download page in your browser — you can ignore it and keep using the app, or click **Skip this version** to not be reminded about that particular version again.
 
-The check is read-only and never auto-downloads or auto-installs. To trigger a check manually, use **Help → Check for Updates…**. To disable auto-checks, set `auto_check = false` under `[updates]` in the settings file. If the manifest URL has not been configured yet, the auto-check is silently skipped. Installs upgraded from 1.3.4 or earlier keep working: their stored manifest URL (the old `b210_sa` release folder) is moved to the new `dses-workbench` folder automatically on first launch, and the old folder keeps a pointer to the current release.
+The check is read-only and never auto-downloads or auto-installs. To trigger a check manually, use **Help → Check for Updates…** (on a Mac, in the menu named after the program). To disable auto-checks, set `auto_check = false` under `[updates]` in the settings file. If the manifest URL has not been configured yet, the auto-check is silently skipped. Installs upgraded from 1.3.4 or earlier keep working: their stored manifest URL (the old `b210_sa` release folder) is moved to the new `dses-workbench` folder automatically on first launch, and the old folder keeps a pointer to the current release.
 
 ### Tips for pulsar work
 

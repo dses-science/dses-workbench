@@ -6,7 +6,15 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
-## v1.9.2 — candidate (bug fix): 1.9.1 crashes on the Mac opening Pulsars in View
+## Next cut — on main, not released
+
+- [x] **Help and guide name the Mac's app menu.** On a Mac, About, Check for
+      Updates… and Quit sit in the menu named after the program (menu roles,
+      the Mac convention), not under Help / File as the guide said (Rick,
+      2026-11-22). One sentence in the Help's window section + notes at the
+      update and About instructions; section 9 re-synced. Text only.
+
+## v1.9.2 — SHIPPED 2026-11-22 (bug fix): 1.9.1 crashes on the Mac opening Pulsars in View
 
 - [x] **No wait cursor on macOS.** Same fault as 1.9.0's: Qt builds
       Qt::WaitCursor from a bitmap on macOS and that crashes in CGImageCreate

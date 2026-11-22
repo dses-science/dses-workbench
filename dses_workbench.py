@@ -3345,7 +3345,11 @@ and drop them next to the program. (You don't need to change any code.)</li>
 <ul>
 <li><b>Menu bar</b> (File / View / Radio / Observe / Recording / Help) — every
 command in the program is in a menu, including everything on the toolbars.
-On a Mac the menus are in the system menu bar at the top of the screen.</li>
+On a Mac the menus are in the system menu bar at the top of the screen, and
+three commands move, as on every Mac program, to the menu named after the
+program: <b>About</b>, <b>Check for Updates…</b> and <b>Quit</b> (File &gt;
+Exit elsewhere). Where this guide says Help &gt; About or Help &gt; Check for
+Updates, look there on a Mac.</li>
 <li><b>Toolbars, top row</b> (big icons with their names):
 <b>Recording</b> — Record, Stop, Format (I/Q, .fil, ezRA), Schedule (opens the
 Record for / Start at / Repeat settings), Quick look; <b>Observation</b> — the
@@ -3907,7 +3911,8 @@ release notes and a button that opens the download page in your browser —
 you can ignore it and keep using the app, or click <b>Skip this version</b>
 to not be reminded about that particular version again.</p>
 <p>The check is read-only and never auto-downloads or auto-installs. To
-trigger a check manually, use <b>Help → Check for Updates…</b>. To disable
+trigger a check manually, use <b>Help → Check for Updates…</b> (on a Mac, in
+the menu named after the program). To disable
 auto-checks, set <code>auto_check = false</code> under <code>[updates]</code>
 in the settings file. If the manifest URL has not been configured yet, the
 auto-check is silently skipped. Installs upgraded from 1.3.4 or earlier keep
