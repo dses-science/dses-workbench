@@ -1,6 +1,6 @@
 # DSES Radio Astronomy Workbench — Installation Guide
 
-**Version 1.8.2**
+**Version 1.9.0**
 Author: Richard M Hambly (K0GD) — k0gd@cnssys.com
 License: GPL-3.0-or-later
 
@@ -150,16 +150,16 @@ Accept the prompt; conda downloads and installs the three packages. If the launc
 
 Download the application from the distribution site. You can either use the direct links below, or browse the folder <https://gpstime.com/sw_distribution/dses-workbench/> and pick the newest `dses-workbench-*.zip`:
 
-- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.8.2.zip>
+- **Application (zip):** <https://gpstime.com/sw_distribution/dses-workbench/dses-workbench-1.9.0.zip>
 - **This guide (PDF):** <https://gpstime.com/sw_distribution/dses-workbench/DSES_Radio_Astronomy_Workbench_Installation.pdf>
 
 The zip is roughly 60 MB — it includes a short sample recording so the program can run in playback mode when no radio is attached. (Replace the version number in the link if a later release has been published.)
 
-**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.8.2`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
+**Give the program folder a name without the version number.** The zip unpacks into a folder named for its version (`dses-workbench-1.9.0`). Rename that folder — `DSES_Workbench` on Windows, `dses-workbench` on Linux and macOS in the steps below — before you create a shortcut. Updates from inside the program replace the files in place and the folder keeps its name, so a folder named for a version would be wrong after the first update.
 
 ### 3.1 Windows 11
 
-1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.6.1 fixed that.) The extracted folder is named for the version, `dses-workbench-1.8.2\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
+1. Extract the zip into a **permanent folder** you have write permission for, for example `C:\DSES`. Do not run the program out of Downloads: each new download lands beside the old copies under a slightly different name, and Windows' own cleanup (Storage Sense) can be set to empty that folder. (Versions through 1.6.0 could not start from a folder whose full path contained a space; 1.6.1 fixed that.) The extracted folder is named for the version, `dses-workbench-1.9.0\`: **rename it** to `DSES_Workbench`, so that the program lives in `C:\DSES\DSES_Workbench\`. It contains `dses_workbench.py`, `launcher.bat`, `launcher.ps1`, `install-shortcut.ps1`, `LICENSE`, the `icons\` folder, and this guide.
 2. Double-click **`launcher.bat`** to start the application.
 3. The first time you run it, the launcher searches for Radioconda in this order: the `RADIOCONDA_ROOT` environment variable, any currently-activated conda env, `%LOCALAPPDATA%\radioconda`, `C:\ProgramData\radioconda`, `%USERPROFILE%\radioconda`, a cached config file, then `conda info --base` if `conda` is on PATH. If none of these find a working install, you'll get a prompt asking for the path; type it in and the launcher remembers it for next time.
 4. (Recommended) Create a desktop shortcut (with the app's pulsar icon) by running **`install-shortcut.ps1`**. The program never creates this icon by itself: extracting the zip does not, and an in-app update keeps whatever shortcut you already have. The reliable way — which works regardless of your PowerShell execution policy — is to open PowerShell in the extracted folder and run:
@@ -178,8 +178,8 @@ After the first run, the app's window opens with the spectrum and waterfall plot
 
    ```bash
    mkdir -p ~/Applications && cd ~/Applications
-   unzip ~/Downloads/dses-workbench-1.8.2.zip
-   mv dses-workbench-1.8.2 dses-workbench
+   unzip ~/Downloads/dses-workbench-1.9.0.zip
+   mv dses-workbench-1.9.0 dses-workbench
    cd dses-workbench
    chmod +x launcher.sh
    ```
@@ -209,8 +209,8 @@ The steps are the same as Linux. Extract it into your personal **`~/Applications
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-unzip ~/Downloads/dses-workbench-1.8.2.zip
-mv dses-workbench-1.8.2 dses-workbench
+unzip ~/Downloads/dses-workbench-1.9.0.zip
+mv dses-workbench-1.9.0 dses-workbench
 cd dses-workbench
 chmod +x launcher.sh
 ./launcher.sh
@@ -304,7 +304,7 @@ When you launch the Workbench with an RSP attached, it appears in the device pic
 
 Regardless of OS, before declaring the install good:
 
-- The window title bar reads `DSES Radio Astronomy Workbench — v1.8.2 — <radio model> — <serial>` (e.g. `… — USRP B210 — 3273A91` or `… — RSP1B — 240513BE60`). The version number must match the bundle you installed; the radio portion confirms which device is being used.
+- The window title bar reads `DSES Radio Astronomy Workbench — v1.9.0 — <radio model> — <serial>` (e.g. `… — USRP B210 — 3273A91` or `… — RSP1B — 240513BE60`). The version number must match the bundle you installed; the radio portion confirms which device is being used.
 - Pull up **Help → User Guide** from the menu bar. The guide should open.
 - Pull up **Help → About**. The author, version, license, and the path to the settings file should be readable.
 - The spectrum plot should show live data (not a flat line at −140 dB). If it's flat, the radio isn't streaming — see Troubleshooting §6.
@@ -350,7 +350,7 @@ You can also trigger a check at any time via **Help → Check for Updates…**. 
 Click **Install Update…** in the update dialog. The app downloads the new bundle, **verifies its published checksum** before changing anything, and asks how to install it:
 
 - **Update this installation** (default) — replaces the current version in place. The files it overwrites are backed up first, so a failed update rolls back instead of leaving a broken install. When it finishes, it offers to **restart** into the new version.
-- **Install a new copy** — installs into a folder you choose and **keeps** the current version. Leave **Add a desktop shortcut** ticked and it creates a *separate* icon labelled with the new version (e.g. *DSES Radio Astronomy Workbench 1.8.2*), so both versions stay launchable.
+- **Install a new copy** — installs into a folder you choose and **keeps** the current version. Leave **Add a desktop shortcut** ticked and it creates a *separate* icon labelled with the new version (e.g. *DSES Radio Astronomy Workbench 1.9.0*), so both versions stay launchable.
 
 Radioconda does **not** need reinstalling for an app update.
 
@@ -568,9 +568,25 @@ If no SDR is attached, the program looks next to the application file for `sampl
 
 - To replace the sample with your own, save a SigMF recording, rename the two files to `sample.sigmf-data` and `sample.sigmf-meta`, and drop them next to the program. (You don't need to change any code.)
 
-### Control panels (dockable)
+### The window: menus, toolbars, panels, status bar
 
-Every control panel is dockable. On the **right**: **Observation**, **Tuning**, **Radio**, and **Recording** — the science settings. On the **left**, beside the plots they belong to: **Spectrum Display** and **Waterfall Display**. Drag a panel by its title bar to rearrange, stack panels as tabs, tear one off into its own floating window (handy on a second monitor), or close it; the **View** menu is organised by column — **Display Panels (left)** and **Control Panels (right)** — and each of those opens onto a *Show this column* switch that hides or restores the whole column in one click, followed by that column's individual panels. Hiding a column remembers which of its panels were open, so showing it again brings back exactly those (a panel you had closed on purpose stays closed). Your arrangement is remembered across runs. To float a panel, **drag it out by its title bar**. The title bar's three buttons act on it afterwards: the first **docks a floating panel back** into the window — which restores the default panel layout, the one arrangement Qt reliably rebuilds, so a panel can always be recovered. The second **enlarges** a floating panel just enough that all of its controls are visible; while enlarged the button shows a double-box *restore* icon and a click returns the panel to its previous size (resizing the panel by hand clears that state, so the next click enlarges afresh). It is greyed out while the panel is docked, where the layout sets the size. **✕** hides the panel. When a column runs out of room Qt stacks panels as tabs along its edge — those tabs are colored (pastel blue, DSES teal when selected) so the stack is easy to spot. The two display panels are deliberately restricted to the left column (they describe the plots, so they stay next to them) — they can still be reordered there, tabbed together, or floated freely. Control panels dock in either column but never along the top or bottom of the window, so a panel on its way to a floating spot is not snapped into a strip across the top. The menu bar (File / View / Radio / Recording / Help) duplicates the important actions, and long status messages — recording filenames, analysis progress — appear in the full-width **status bar** at the bottom of the window where they are never truncated.
+The plots fill the middle of the window. Around them:
+
+- **Menu bar** (File / View / Radio / Observe / Recording / Help) — every command in the program is in a menu, including everything on the toolbars. On a Mac the menus are in the system menu bar at the top of the screen.
+
+- **Toolbars, top row** (big icons with their names): **Recording** — Record, Stop, Format (I/Q, .fil, ezRA), Schedule (opens the Record for / Start at / Repeat settings), Quick look; **Observation** — the observation Preset, Live, Sweep; **Tools** — Pulsars in View, B210 Self Test, Drift-Scan Review; **Window** — Settings Panels (show or hide them), Full Screen, User Guide.
+
+- **Toolbars, second row** (compact): **Tuning** — the Band presets, the centre frequency in MHz (type a number and press Enter; Ctrl+F jumps there; it sets the Tuning panel to Manual at that frequency), RX gain and sample rate; **Display** — Line View, Trace (Average / Peak / both), Autoscale, Waterfall Levels, Reset Axes, Max Hold, Min Hold, Reset Holds, Clear Markers. Hover over any button for what it does.
+
+- Every toolbar button drives the *same* control as the panels, so the two always agree. Toolbars can be dragged to another position or hidden (View > Toolbars); *Show Button Names* there turns the names under the big icons on or off. A toolbar too long for the window hides its last buttons behind a **»**; they are all in the menus too.
+
+- **Settings panels** — **Observation**, **Tuning**, **Radio**, **Recording**, **Spectrum Display** and **Waterfall Display** — are stacked as tabs in one column on the right; click a tab (the names run down the window's edge) to bring that panel up. **F9** or the Settings Panels button hides them all for a full-width plot and brings back exactly the ones that were open. Drag a panel by its title bar to dock it somewhere else, put two side by side, or tear it off into its own window (handy on a second monitor). **View > Panels** lists every panel, and offers two ready arrangements: *One Column* (the default) and *Two Columns* (display panels on the left, science panels on the right, as in versions 1.2 to 1.8). **View > Reset Window Layout** puts toolbars and panels back where they start. Your arrangement is remembered across runs.
+
+- The panel title bar's three buttons: the first **docks a floating panel back** (it restores the default layout, the one arrangement Qt reliably rebuilds, so a panel can always be recovered); the second **enlarges** a floating panel just enough that all of its controls show, and toggles back; **✕** hides the panel (View > Panels brings it back).
+
+- **Status bar**: messages (recording file names, analysis progress) on the left, never truncated; fixed fields on the right — the recording state (red with elapsed and time left while recording, amber with the countdown while armed), **Check settings** in amber when the Observation panel's settings check finds a risky combination (hover for what it found), the centre frequency, sample rate, gain, the radio, **O:** the number of dropped-sample events since the program started (red once any), UTC, and the local sidereal time at the site.
+
+- Keys: Ctrl+R Record, Ctrl+F frequency box, Ctrl+L Line View, Ctrl+Shift+A Autoscale, Ctrl+0 Reset Axes, Ctrl+P Pulsars in View, F9 settings panels, F11 full screen, F1 this guide (Cmd instead of Ctrl on a Mac).
 
 #### Observe menu — Pulsars in View (Ctrl+P)
 
@@ -712,7 +728,7 @@ Live FFT magnitude in dB. The FFT itself runs inside the GNU Radio flowgraph (co
 
 - **Trace**: how the trace is drawn when there are more FFT bins than screen pixels (any large FFT size). *Average* (the default) draws the mean power of the bins under each pixel: a thin line, the way SDR Console draws it, in which a weak broad line stands out without a long time average. *Peak* draws the highest and lowest bin under each pixel — a band as thick as the noise (at 65536 points it can be thicker than the hydrogen line is tall), but the weakest *narrow* carrier still shows, so use it for RFI hunting; Sweep always uses it, and so do the Max/Min hold traces. *Average + peak* draws the thin line over a faint peak band. Zoom in until there are two bins or fewer per pixel and every bin is drawn as it is, whatever this is set to.
 
-- **Line view** (the button at the top of the panel, View menu, Ctrl+L): one click to *watch* a spectral line change in shape and height. It picks the FFT size that gives about 1 kHz resolution at the current sample rate, sets Avg α to 0.05 (about a two-second response), Smooth to 9 bins, Trace to Average, turns the holds off, zooms to ±0.9 MHz around 1420.406 MHz when the hydrogen line is in a wide enough band, and a few seconds later fits the Y axis closely around the middle of the trace (a narrow carrier and the band edges may run off the plot rather than flatten the line). Click it again to get back the settings you had. Why these numbers: the scatter of a trace falls as 1/√(resolution × time), so a 30 Hz bin needs fifty times the averaging of a 1.5 kHz one for the same smoothness — fine resolution is for narrow carriers, not for a line a hundred kilohertz wide. Baseline is left as you set it; add **Flatten** or a stored reference if you want the bandpass removed as well.
+- **Line view** (the button at the top of the panel, the Display toolbar, View menu, Ctrl+L): one click to *watch* a spectral line change in shape and height. It picks the FFT size that gives about 1 kHz resolution at the current sample rate, sets Avg α to 0.05 (about a two-second response), Smooth to 9 bins, Trace to Average, turns the holds off, zooms to ±0.9 MHz around 1420.406 MHz when the hydrogen line is in a wide enough band, and a few seconds later fits the Y axis closely around the middle of the trace (a narrow carrier and the band edges may run off the plot rather than flatten the line). Click it again to get back the settings you had. Why these numbers: the scatter of a trace falls as 1/√(resolution × time), so a 30 Hz bin needs fifty times the averaging of a 1.5 kHz one for the same smoothness — fine resolution is for narrow carriers, not for a line a hundred kilohertz wide. Baseline is left as you set it; add **Flatten** or a stored reference if you want the bandpass removed as well.
 
 - **Baseline**: removes the receiver's bandpass shape so a weak line stands up from a flat floor near 0 dB. *Off*: raw spectrum. *Reference (ON/OFF)*: point at empty sky, click **Store reference (OFF)**, then point at the source — the plot shows the difference. *Flatten (median)*: subtracts a wide running-median estimate of the bandpass in real time with no reference needed; set **Flatten width** several times wider than the feature you want to keep (a 1 MHz hydrogen profile at 8 MS/s and 4096 points is ~500 bins, so ~1501 bins). Either mode auto-fits the Y axis to the flattened trace. This plus a low Avg α is the "watch the line" view; the ezRA drift-scan recording is unaffected by any of it.
 
