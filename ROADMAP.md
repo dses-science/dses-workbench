@@ -6,7 +6,21 @@ cross-machine record (Mac + Windows) — keep it committed and pushed.
 Conventions: `[ ]` planned, `[x]` shipped (note the commit), `[-]` dropped
 (note why). Move items between versions freely until they ship.
 
-## v1.9.1 — candidate (bug fix): 1.9.0 crashes on the Mac
+## v1.9.2 — candidate (bug fix): 1.9.1 crashes on the Mac opening Pulsars in View
+
+- [x] **No wait cursor on macOS.** Same fault as 1.9.0's: Qt builds
+      Qt::WaitCursor from a bitmap on macOS and that crashes in CGImageCreate
+      (Rick, 2026-11-22, clicking the Pulsars in View icon). Every busy cursor
+      now goes through `_BusyCursor`, which shows none on macOS (the Mac puts up
+      its own spinning wheel by itself if a step stalls). Per Qt's
+      qcocoacursor.mm the only bitmap-built shapes left are Wait, SizeAll,
+      Blank, UpArrow and Bitmap (Busy only without Qt's private-API cursor);
+      the program now asks for none of them on a Mac. Resize cursors are
+      native from macOS 15. Linux (X11 cursor themes) and Windows (system
+      cursors) never take this path.
+- [ ] Confirm on the Mac.
+
+## v1.9.1 — SHIPPED 2026-11-22 (bug fix): 1.9.0 crashes on the Mac
 
 - [x] **Toolbars have no drag grip on macOS.** 1.9.0 crashed on Rick's Mac
       (macOS 27.2.1, Qt 6.11.1) about 35 s after opening: a movable toolbar's

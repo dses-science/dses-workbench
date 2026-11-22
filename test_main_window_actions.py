@@ -124,6 +124,17 @@ try:
 finally:
     sys.platform = _plat
 check(not mac_tb.isMovable(), "a toolbar built on macOS has no drag grip")
+# macOS: the bitmap WaitCursor crashed 1.9.1 opening Pulsars in View.
+
+with A._BusyCursor():
+    check(QtWidgets.QApplication.overrideCursor() is not None, "busy cursor shown (not macOS)")
+check(QtWidgets.QApplication.overrideCursor() is None, "busy cursor removed afterwards")
+try:
+    sys.platform = "darwin"
+    with A._BusyCursor():
+        check(QtWidgets.QApplication.overrideCursor() is None, "no busy cursor on macOS")
+finally:
+    sys.platform = _plat
 ch.toolbars.remove(mac_tb)
 ch.toolbars_menu.removeAction(mac_tb.toggleViewAction())
 mac_tb.deleteLater()

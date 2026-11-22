@@ -96,6 +96,27 @@ pg.setConfigOption('imageAxisOrder', 'row-major')
 pg.setConfigOption('background', 'k')
 pg.setConfigOption('foreground', 'w')
 
+
+class _BusyCursor:
+    """`with _BusyCursor():` shows the wait cursor for a slow step, except on
+    macOS. There Qt has no system cursor for Qt::WaitCursor (nor SizeAll) and
+    builds it from a bitmap (QCocoaCursor::createCursorData ->
+    QImage::toCGImage), and on the Mac (macOS 27.2.1, Qt 6.11.1) that crashed
+    the program with a SIGSEGV in CGImageCreate: 1.9.0 on a toolbar grip
+    (SizeAll), 1.9.1 opening Pulsars in View (WaitCursor), 2026-11-22. Every
+    busy cursor in this program goes through here; never call
+    setOverrideCursor directly."""
+    def __enter__(self):
+        self._on = sys.platform != "darwin"
+        if self._on:
+            QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
+        return self
+
+    def __exit__(self, *exc):
+        if self._on:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        return False
+
 # Scrollbars: keep the tidy "as needed" policy everywhere. On macOS the native
 # scrollbar is a translucent overlay that fades out after a scroll gesture and
 # can't be grabbed (and "always on" only keeps the empty track visible, not the
@@ -154,7 +175,7 @@ import time
 
 # === App metadata ===
 APP_NAME        = "DSES Radio Astronomy Workbench"
-APP_VERSION     = "1.9.1"
+APP_VERSION     = "1.9.2"
 APP_AUTHOR      = "Richard M Hambly (K0GD)"
 APP_AUTHOR_EMAIL = "k0gd@cnssys.com"
 APP_COPYRIGHT   = "Copyright © 2026 Richard M Hambly (K0GD)"
@@ -5622,8 +5643,7 @@ class PulsarPlannerDialog(QtWidgets.QDialog):
         self._debounce.stop()               # a manual call satisfies it
         ts = self._ref_ts()
         self._ref_ts_used = ts
-        QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
+        with _BusyCursor():
             vis = pulsar_planner.visible_now(
                 self._rows, self._site["lat_deg"], self._site["lon_deg"],
                 mask_deg=self._mask.value(), center_hz=self._center_hz,
@@ -5631,8 +5651,6 @@ class PulsarPlannerDialog(QtWidgets.QDialog):
                 height_m=self._site.get("amsl", 0.0),
                 include_below=self._show_below.isChecked(),
                 unix_ts=ts)
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
         self._all = vis
         self._update_time_note()
         # Loud in the title bar as well: a screenshot of a planned table
@@ -8598,12 +8616,9 @@ class dses_workbench(gr.top_block, QtWidgets.QMainWindow):
         if cat is not None and not force_refresh:
             return cat
         cat = pulsar_planner.Catalog(cache_dir=self.recording_dir)
-        QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
         self._status_bar.showMessage("Loading pulsar catalog…")
-        try:
+        with _BusyCursor():
             ok = cat.load(force_refresh=force_refresh)
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
         if not ok:
             self._status_bar.clearMessage()
             QtWidgets.QMessageBox.warning(
